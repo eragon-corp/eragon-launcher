@@ -17,7 +17,16 @@ You need:
 | Pi Agent | 0.73.1 |
 | OpenCode | 1.3.7 |
 
-1. [Download eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh) and save it to your Downloads folder.
+1. Download the launcher from the public [Eragon Router repository](https://github.com/eragon-corp/eragon-router):
+
+   ```bash
+   mkdir -p "$HOME/Downloads"
+   curl -fsSL https://raw.githubusercontent.com/eragon-corp/eragon-router/main/eragon.sh \
+     -o "$HOME/Downloads/eragon.sh"
+   ```
+
+   You can also [download eragon.sh directly](https://raw.githubusercontent.com/eragon-corp/eragon-router/main/eragon.sh) and save it to your Downloads folder.
+
 2. Open a terminal in the project you want to work on.
 3. Run:
 
