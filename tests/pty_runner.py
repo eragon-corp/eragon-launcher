@@ -193,6 +193,8 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
     client_prompts_seen = 0
     sent_gateway = False
     sent_remember = False
+    key_actions = iter(request.get("keyActions", [""]))
+    key_prompts_seen = 0
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], .1)
@@ -205,6 +207,11 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
             os.write(fd, (request.get('gatewayInput', '') + '\n').encode()); sent_gateway = True
         if not sent_remember and b'Remember API key locally (owner-only plaintext file)? [y/N]: ' in transcript:
             os.write(fd, (request.get('rememberChoice', '') + '\n').encode()); sent_remember = True
+        key_count = transcript.count(b'Key action [1]: ')
+        if key_count > key_prompts_seen:
+            action = next(key_actions, '')
+            os.write(fd, b'\x03' if action == 'INTERRUPT' else (action + '\n').encode())
+            key_prompts_seen = key_count
         client_count = transcript.count(b'Client number [1]: ')
         if client_count > client_prompts_seen:
             os.write(fd, (next(client_choices, '') + '\n').encode()); client_prompts_seen = client_count

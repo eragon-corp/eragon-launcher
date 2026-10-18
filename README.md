@@ -64,7 +64,18 @@ After entering a new key and selecting a usable model, the launcher asks `Rememb
 
 Credentials are stored as **plaintext** in `${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json`, inside a directory with mode `700`, with file mode `600`. This is a local convenience file, not encrypted storage or an OS keychain. Credentials are indexed by normalized Gateway URL (trailing `/v1` shares the same key); switching hosts or base paths never silently reuses another Gateway's key. An explicit `ERAGON_API_KEY` overrides a saved key; use `--remember-key` to save that replacement. Without `--endpoint`, enter a new URL or press Enter to reuse the last remembered Gateway. Noninteractive launches still require an explicit endpoint.
 
-To replace the key for one Gateway, run:
+When an interactive launch finds a saved key for the selected Gateway, it shows:
+
+```text
+1) Use saved key
+2) Update saved key
+q) Quit
+Key action [1]:
+```
+
+Press Enter to reuse it or choose `2` to enter and save a replacement through the hidden prompt. Quitting, cancelling, or failing model discovery preserves the saved key. No key value is displayed. An explicit environment key and noninteractive launches bypass this menu.
+
+To go directly to replacing the key for one Gateway, run:
 
 ```bash
 bash ~/Downloads/eragon.sh --update-key

@@ -25,7 +25,7 @@ Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDO
 Optional ERAGON_COMPATIBILITY_FILE: local verified-profile JSON (no keys/URLs).
 Flags override environment values and remembered credentials.
 Without an endpoint, prompt for a Gateway URL (Enter uses the last saved URL).
-Without a key, use a matching saved key or prompt with hidden input.
+Without a key, offer to use/update a matching saved key, or prompt with hidden input.
 Local storage: ${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json.
 Saving is opt-in; keys are plaintext with directory 700 / file 600 permissions.
 Model menu: /text searches all usable models, / clears, m shows unverified.
@@ -39,7 +39,7 @@ endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
 client=${ERAGON_CLIENT-}
-search_query=''; remember_key=0; forget_key=0; prompted_key=0; update_key=0
+search_query=''; remember_key=0; forget_key=0; prompted_key=0; update_key=0; using_saved_key=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --endpoint|--model|--context-window|--client|--search)
@@ -141,6 +141,7 @@ if [[ "$client" != claude && "$endpoint" == */v1 ]]; then endpoint=${endpoint%/v
 credential_endpoint=${endpoint%/v1}
 if [[ -z "$eragon_key" && "$update_key" == 0 ]]; then
   eragon_key=$(printf '%s' "$saved_credentials" | jq -r --arg url "$credential_endpoint" '.keys[$url] // ""')
+  if [[ -n "$eragon_key" ]]; then using_saved_key=1; fi
 fi
 unset saved_credentials
 if [[ -n "$selected" ]]; then
@@ -169,6 +170,18 @@ printf '%s' "$client_version" | jq -eRs --argjson minimum "$minimum_version" '
   [.major,.minor,.patch] | map(tonumber) | . >= $minimum
 ' >/dev/null || fail "Update $client_label to its supported baseline or later: Claude Code 2.1.302 (claude update), Codex 0.160.0, Pi 0.73.1, OpenCode 1.3.7."
 printf 'Eragon Router · %s\nEndpoint: %s\n\n' "$client_label" "$endpoint"
+if [[ "$using_saved_key" == 1 && -t 0 && -t 1 ]]; then
+  printf 'API key saved for this Gateway:\n  1) Use saved key\n  2) Update saved key\n  q) Quit\n'
+  while true; do
+    read -r -p 'Key action [1]: ' key_action || fail 'Key selection cancelled.'
+    case "${key_action:-1}" in
+      1) break ;;
+      2) eragon_key=''; remember_key=1; break ;;
+      q|Q) exit 0 ;;
+      *) printf 'Enter 1, 2 or q.\n' ;;
+    esac
+  done
+fi
 if [[ -z "$eragon_key" ]]; then
   [[ -t 0 && -t 1 ]] || fail 'Set ERAGON_API_KEY or run in an interactive terminal to enter a key.'
   command -v stty >/dev/null 2>&1 || fail 'Missing stty.'

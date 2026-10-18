@@ -499,6 +499,41 @@ class LauncherTests(unittest.TestCase):
         self.assertNotEqual(reply["exit"], 0)
         self.assertIn("Unsafe credential file", reply["output"])
 
+    def test_saved_key_menu_reuse_default_and_invalid_choice(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{"https://gateway.example.com/gw":"fixture-secret"}}
+        reply = self.run_launcher({}, savedCredentials=saved, args=["--model","coder"], noCatalogue=1,
+                                  keyActions=["invalid", ""])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("Key action [1]", reply["output"])
+        self.assertIn("Enter 1, 2 or q", reply["output"])
+        self.assertNotIn("Personal API Key", reply["output"])
+
+    def test_saved_key_menu_update_preserves_other_gateways(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{
+            "https://gateway.example.com/gw":"old-key", "https://other.example":"other-key"}}
+        expected = dict(saved["keys"], **{"https://gateway.example.com/gw":"fixture-secret"})
+        reply = self.run_launcher({"data":[{"id":"coder"}]}, savedCredentials=saved,
+                                  keyActions=["2"], expectedSavedKeys=expected)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("Personal API Key", reply["output"])
+        self.assertNotIn("Remember API key locally", reply["output"])
+
+    def test_saved_key_menu_quit_and_failed_update_preserve_key(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{"https://gateway.example.com/gw":"old-key"}}
+        for actions, options, status in [(["q"], {}, 0), (["2"], {"interrupt":True}, 130),
+                                         (["2"], {"curlFail":1}, 1)]:
+            reply = self.run_launcher({"data":[{"id":"coder"}]}, savedCredentials=saved,
+                keyActions=actions, expectedSavedKeys=saved["keys"], **options)
+            self.assertEqual(reply["exit"], status)
+            self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_environment_key_bypasses_saved_key_menu(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{"https://gateway.example.com/gw":"old-key"}}
+        reply = self.run_launcher({}, savedCredentials=saved, args=["--model","coder"],
+            expectedSavedKeys=saved["keys"], noCatalogue=1, environment={"ERAGON_API_KEY":"fixture-secret"})
+        self.assertEqual(reply["exit"], 0)
+        self.assertNotIn("Key action [1]", reply["output"])
+
     def test_update_key_replaces_only_selected_gateway(self):
         saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{
             "https://gateway.example.com/gw":"old-key", "https://other.example":"other-key"}}
