@@ -41,6 +41,7 @@ The launcher guides you through these steps:
 3. **Enter your API key.** Input is hidden, so nothing appears as you type or paste.
 4. **Choose a model.** Enter a number, or type `/keyword` to search.
 5. **Choose whether to remember your key.** Enter `y` to save it locally, or press Enter to use it for this run only.
+6. **Set up Eragon Memory (optional).** Choose `2` to automatically install the Memory bridge and connect it to this client, or press Enter to skip setup.
 
 Your selected client then opens in your current project folder.
 
@@ -106,13 +107,36 @@ bash ~/Downloads/eragon.sh --forget-key
 
 Keys are not displayed or placed in command arguments. Do not paste a key into a terminal command, commit it to a repository, or include it in a support request.
 
-## Using an existing Eragon Memory connection
+## Connect Eragon Memory
 
-If you have already registered [Eragon Context MCP](https://github.com/eragon-corp/eragon-context-mcp) with your client, the router passes the selected key to that connection. Codex, Pi, and OpenCode receive `ERAGON_API_KEY` and `ERAGON_GATEWAY_URL`; Claude Code uses its `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL`. Updating a saved key also updates the key passed to Memory on the next launch.
+The launcher can install and connect [Eragon Context MCP](https://github.com/eragon-corp/eragon-context-mcp) for your selected client. At the Memory prompt, choose `2`:
 
-The bridge must be registered for the same Gateway. For Codex, its MCP entry must forward `ERAGON_API_KEY` through `env_vars`, as the bridge installer configures. An explicit `--url` in an existing bridge entry takes precedence over the environment; update that registration when switching Gateways. Your key must have the required Eragon Memory permissions.
+```text
+Set up Eragon Memory? Requires an Eragon Gateway with Memory access.
+  1) Skip setup (default)
+  2) Install or reconnect Memory
+Memory setup [1]:
+```
 
-This credential support does not install or register the bridge, enable Memory on other Gateways, or change your Memory permissions.
+Or request automatic setup directly:
+
+```bash
+bash ~/Downloads/eragon.sh --memory
+```
+
+Memory setup requires **Node.js 22.19+ and npm**, an Eragon Gateway, and a personal key with the required Memory permissions. Pi also needs built-in MCP support; update Pi if the launcher reports it is missing. Installing the bridge does not grant additional access to your key.
+
+The launcher downloads a pinned bridge version into `${XDG_DATA_HOME:-$HOME/.local/share}/eragon-router/memory`, reuses that installation on later runs, and registers it only with the selected client. It does not require a global npm install. Reconnecting updates that client's Memory registration to the selected Gateway. If installation or registration fails, the launcher stops with an error instead of starting a client with incomplete setup.
+
+Setup writes a **persistent MCP registration without your API key**. Other client configuration is preserved; the bridge installer keeps backups of configuration files it writes directly. The model provider remains configured by the router. Start future sessions through the router so the cached bridge is on PATH and receives the selected key. Choosing “Skip setup” does not remove or disable a previously registered Memory connection.
+
+Codex, Pi, and OpenCode receive the same selected key as `ERAGON_API_KEY`; Claude Code's bridge uses its `ANTHROPIC_AUTH_TOKEN`. Saved-key updates take effect on the next launch. The launcher sends no test inference or Memory save request during setup.
+
+Try this in the client after setup:
+
+```text
+What do you know about how I like to work? Cite any Eragon memories you rely on, and say so if there are none.
+```
 
 ## Optional shortcuts
 
@@ -164,7 +188,7 @@ The Gateway must support Anthropic Messages for Claude Code, Responses for Codex
 
 ## Privacy
 
-Your chosen client sends the conversation and any project context it uses to your configured Gateway. Eragon Router does not add telemetry or change the client's own session storage, logging, or data policies. It does not modify the client's persistent login or configuration files.
+Your chosen client sends the conversation and any project context it uses to your configured Gateway. Eragon Router does not add telemetry or change the client's own session storage, logging, or data policies. It does not modify the client's persistent login files. Optional Memory setup writes the MCP registration described above.
 
 When requesting support, share the client name, version, and error message. Remove API keys and sensitive project content first.
 

@@ -331,6 +331,61 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('CODEX_LAUNCHED', reply["output"])
         self.assertIn('"context": 64000', reply["output"])
 
+    def test_memory_installs_and_registers_only_selected_client(self):
+        for client, agent in [("claude","claude-code"),("codex","codex"),("pi","pi"),("opencode","opencode")]:
+            with self.subTest(client=client):
+                reply = self.run_launcher({}, args=["--client",client,"--model","coder","--memory"],
+                    environment={"ERAGON_API_KEY":"fixture-secret","ANTHROPIC_AUTH_TOKEN":"stale","OPENAI_API_KEY":"stale"},
+                    noCatalogue=1, noninteractive=True, expectMemoryData=True, expectMemoryRegistration=True)
+                self.assertEqual(reply["exit"], 0)
+                self.assertEqual(reply["memoryRegistration"], {"agent":agent,"url":"https://gateway.example.com/gw","command":"eragon-context-mcp"})
+                self.assertIn("FIXTURE_MEMORY_INSTALLED", reply["output"])
+                self.assertIn("FIXTURE_MEMORY_REGISTERED", reply["output"])
+
+    def test_memory_interactive_opt_in_and_cached_reconnect(self):
+        reply = self.run_launcher({}, args=["--model","coder"], noCatalogue=1,
+            memoryChoices=["bad","2"], memoryCached=True, expectMemoryRegistration=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("Enter 1 or 2", reply["output"])
+        self.assertNotIn("FIXTURE_MEMORY_INSTALLED", reply["output"])
+        self.assertIn("FIXTURE_MEMORY_REGISTERED", reply["output"])
+        reply = self.run_launcher({}, args=["--model","coder"], noCatalogue=1)
+        self.assertEqual(reply["exit"], 0)
+        self.assertNotIn("FIXTURE_MEMORY_REGISTERED", reply["output"])
+
+    def test_cached_memory_remains_on_path_when_setup_is_skipped(self):
+        for client in ["claude","codex","pi","opencode"]:
+            reply = self.run_launcher({}, args=["--client",client,"--model","coder"], noCatalogue=1,
+                memoryCached=True, expectMemoryOnPath=True, environment={"ERAGON_API_KEY":"fixture-secret"}, noninteractive=True)
+            self.assertEqual(reply["exit"], 0)
+            self.assertNotIn("FIXTURE_MEMORY_REGISTERED", reply["output"])
+            self.assertNotIn("FIXTURE_MEMORY_INSTALLED", reply["output"])
+
+    def test_memory_requires_supported_node_and_pi_mcp(self):
+        for client, environment, message in [
+            ("codex",{"FIXTURE_NODE_VERSION":"v22.18.0"},"Node.js 22.19"),
+            ("pi",{"FIXTURE_PI_MCP":"0"},"built-in MCP support")]:
+            reply = self.run_launcher({}, args=["--client",client,"--model","coder","--memory"],
+                noCatalogue=1, environment=dict(environment,ERAGON_API_KEY="fixture-secret"), noninteractive=True)
+            self.assertNotEqual(reply["exit"], 0)
+            self.assertIn(message, reply["output"])
+            self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_memory_install_or_registration_failure_stops_launch(self):
+        for environment, options, message in [
+            ({"FIXTURE_NPM_FAIL":"1"},{"expectMemoryData":True},"Could not install Eragon Memory"),
+            ({"FIXTURE_REGISTER_FAIL":"1"},{"memoryCached":True},"Could not register Eragon Memory")]:
+            reply = self.run_launcher({}, args=["--client","codex","--model","coder","--memory"],
+                noCatalogue=1, environment=dict(environment,ERAGON_API_KEY="fixture-secret"), noninteractive=True, **options)
+            self.assertNotEqual(reply["exit"], 0)
+            self.assertIn(message, reply["output"])
+            self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_opencode_v2_uses_standalone_process(self):
+        reply = self.run_launcher({}, args=["--client","opencode","--model","coder"], noCatalogue=1,
+            environment={"ERAGON_API_KEY":"fixture-secret","FIXTURE_OPENCODE_VERSION":"2.0.0"},noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+
     def test_memory_child_receives_selected_key_for_all_non_claude_clients(self):
         endpoint = "https://gateway.example.com/gw"
         stale = {"ANTHROPIC_BASE_URL":"https://stale.example/gw", "ANTHROPIC_AUTH_TOKEN":"stale-key",

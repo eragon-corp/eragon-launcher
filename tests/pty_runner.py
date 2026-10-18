@@ -85,6 +85,8 @@ print('CODEX_LAUNCHED ' + json.dumps({'model': sys.argv[3], 'context': context, 
 import os, sys, json, pathlib
 if sys.argv[1:] == ['--version']:
     print(os.environ.get('FIXTURE_PI_VERSION', '0.73.1'), file=sys.stderr); sys.exit(0)
+if sys.argv[1:] == ['--help']:
+    print('--no-mcp' if os.environ.get('FIXTURE_PI_MCP', '1') == '1' else 'no MCP support'); sys.exit(0)
 assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
 assert os.environ['ERAGON_API_KEY'] == os.environ['ERAGON_ROUTER_TOKEN']
 assert os.environ['ERAGON_GATEWAY_URL'] == os.environ['EXPECTED_ENDPOINT']
@@ -110,6 +112,9 @@ sys.exit(int(os.environ.get('FIXTURE_PI_EXIT', '0')))
 import os, sys, json
 if sys.argv[1:] == ['--version']:
     print(os.environ.get('FIXTURE_OPENCODE_VERSION', '1.3.7')); sys.exit(0)
+if int(os.environ.get('FIXTURE_OPENCODE_VERSION','1.3.7').split('.')[0]) >= 2:
+    assert sys.argv[1:3] == ['mini', '--standalone']
+    sys.argv = [sys.argv[0]] + sys.argv[3:]
 assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
 assert os.environ['ERAGON_API_KEY'] == os.environ['ERAGON_ROUTER_TOKEN']
 assert os.environ['ERAGON_GATEWAY_URL'] == os.environ['EXPECTED_ENDPOINT']
@@ -128,6 +133,54 @@ assert config['compaction']['auto'] is True
 assert config['compaction']['reserved'] == model['limit']['context'] - model['limit']['context'] // 5 * 4
 print('OPENCODE_LAUNCHED ' + json.dumps(config))
 """)
+    for client_path in [claude, codex, pi, opencode]:
+        source = client_path.read_text()
+        check = """
+if os.environ.get('EXPECT_MEMORY_ON_PATH') == '1':
+    import shutil, pathlib
+    assert shutil.which('eragon-context-mcp') == str(pathlib.Path(os.environ['XDG_DATA_HOME']) / 'eragon-router' / 'memory' / 'node_modules' / '.bin' / 'eragon-context-mcp')
+"""
+        marker = "assert os.environ['ANTHROPIC_AUTH_TOKEN'] == 'fixture-secret'" if client_path == claude else "assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'"
+        client_path.write_text(source.replace(marker, check + marker, 1))
+    node = root / 'node'
+    node.write_text("#!/usr/bin/env python3\nimport os\nprint(os.environ.get('FIXTURE_NODE_VERSION', 'v22.23.2'))\n")
+    bridge_installer = root / 'bridge-installer.py'
+    bridge_installer.write_text("""#!/usr/bin/env python3
+import os, sys, json, pathlib
+assert sys.argv[1:3] == ['install','--agent'] and sys.argv[4] == '--url'
+assert len(sys.argv) == 6 and sys.argv[3] in ['claude-code','codex','pi','opencode']
+assert sys.argv[5] == os.environ['EXPECTED_ENDPOINT']
+assert all('fixture-secret' not in arg for arg in sys.argv)
+assert 'eragon_key' not in os.environ
+if sys.argv[3] == 'claude-code':
+    assert os.environ['ANTHROPIC_AUTH_TOKEN'] == 'fixture-secret'
+    assert 'ERAGON_API_KEY' not in os.environ
+else:
+    assert os.environ['ERAGON_API_KEY'] == 'fixture-secret'
+    assert 'ANTHROPIC_AUTH_TOKEN' not in os.environ
+if os.environ.get('FIXTURE_REGISTER_FAIL') == '1': sys.exit(1)
+p = pathlib.Path(os.environ['XDG_CONFIG_HOME']) / 'memory-registration.json'
+p.parent.mkdir(parents=True, exist_ok=True)
+p.write_text(json.dumps({'agent':sys.argv[3], 'url':sys.argv[5], 'command':'eragon-context-mcp'}))
+print('FIXTURE_MEMORY_REGISTERED')
+""")
+    npm = root / 'npm'
+    npm.write_text("""#!/usr/bin/env python3
+import os, sys, pathlib, shutil
+assert sys.argv[1:3] == ['install','--prefix']
+assert '--ignore-scripts' in sys.argv and '--no-audit' in sys.argv and '--no-fund' in sys.argv
+assert sys.argv[-1] == 'https://github.com/eragon-corp/eragon-context-mcp/archive/575d1617d181f2fcaefa91f648dee111a2959cb1.tar.gz'
+for name in ['ERAGON_API_KEY','ERAGON_ROUTER_TOKEN','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY','eragon_key']:
+    assert name not in os.environ, name
+assert all('fixture-secret' not in arg for arg in sys.argv)
+if os.environ.get('FIXTURE_NPM_FAIL') == '1': sys.exit(1)
+p = pathlib.Path(sys.argv[3]) / 'node_modules' / '.bin' / 'eragon-context-mcp'
+p.parent.mkdir(parents=True, exist_ok=True)
+shutil.copyfile(pathlib.Path(__file__).with_name('bridge-installer.py'), p)
+p.chmod(0o700)
+print('FIXTURE_MEMORY_INSTALLED')
+""")
+    node.chmod(0o700); npm.chmod(0o700)
     memory_bridge = root / 'memory-bridge.py'
     memory_bridge.write_text("import os, sys\nassert os.environ['ERAGON_API_KEY'] == 'fixture-secret'\nassert sys.argv[1] == '--url'\nassert sys.argv[2] == " + repr(request.get('expectedEndpoint', 'https://gateway.example.com/gw')) + "\nassert 'ANTHROPIC_BASE_URL' not in os.environ\nprint('MEMORY_CHILD_AUTH_MATCHED')\n")
     for client_path in [codex, pi, opencode]:
@@ -148,17 +201,25 @@ if os.environ.get('CHECK_MEMORY_CHILD') == '1':
         MODEL_RESPONSE=request['models'], CURL_FAIL=str(request.get('curlFail', 0)),
         ANTHROPIC_API_KEY='stale', CLAUDE_CODE_DISABLE_THINKING='1')
     # Do not accidentally use credentials/config from the developer's shell.
-    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN', 'ERAGON_GATEWAY_URL', 'CHECK_MEMORY_CHILD', 'ERAGON_ROUTER_PI_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'FIXTURE_PI_VERSION', 'FIXTURE_OPENCODE_VERSION', 'FIXTURE_PI_EXIT']:
+    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN', 'ERAGON_GATEWAY_URL', 'CHECK_MEMORY_CHILD', 'ERAGON_ROUTER_PI_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'FIXTURE_PI_VERSION', 'FIXTURE_OPENCODE_VERSION', 'FIXTURE_PI_EXIT', 'FIXTURE_PI_MCP', 'FIXTURE_NODE_VERSION', 'FIXTURE_NPM_FAIL', 'FIXTURE_REGISTER_FAIL']:
         environment.pop(name, None)
     if request.get('provideEndpoint', True):
         environment['ERAGON_ENDPOINT'] = 'https://gateway.example.com/gw'
     environment.update(request.get('environment', {}))
     environment['EXPECTED_ENDPOINT'] = request.get('expectedEndpoint', 'https://gateway.example.com/gw')
+    environment['EXPECT_MEMORY_ON_PATH'] = '1' if request.get('expectMemoryOnPath') else '0'
     environment['CHECK_MEMORY_CHILD'] = '1' if request.get('checkMemoryChild') else '0'
     environment['EXPECT_NO_CATALOGUE'] = str(request.get('noCatalogue', 0))
     environment['EXPECTED_PROFILE'] = request.get('expectedProfile', '')
     environment['TMPDIR'] = directory
     environment['XDG_CONFIG_HOME'] = str(root / 'config')
+    environment['XDG_DATA_HOME'] = str(root / 'data')
+    if request.get('memoryCached'):
+        cached = root / 'data' / 'eragon-router' / 'memory'
+        binary = cached / 'node_modules' / '.bin' / 'eragon-context-mcp'
+        binary.parent.mkdir(parents=True)
+        binary.write_bytes(bridge_installer.read_bytes()); binary.chmod(0o700)
+        (cached / 'source-revision').write_text('575d1617d181f2fcaefa91f648dee111a2959cb1\n')
     credential_dir = root / 'config' / 'eragon-router'
     credential_file = credential_dir / 'credentials.json'
     if 'savedCredentials' in request:
@@ -186,11 +247,17 @@ if os.environ.get('CHECK_MEMORY_CHILD') == '1':
             assert again.returncode == 0, again.stdout + again.stderr
             assert 'Personal API Key' not in again.stdout
             result['reloaded'] = True
+        registration = root / 'config' / 'memory-registration.json'
+        if registration.exists():
+            assert 'fixture-secret' not in registration.read_text()
+            result['memoryRegistration'] = json.loads(registration.read_text())
         return result
 
-    expected_files = ['claude', 'codex', 'curl', 'eragon.sh', 'pi', 'opencode', 'memory-bridge.py']
-    if request.get('expectStorage') or 'savedCredentials' in request or request.get('symlinkCredentials'):
+    expected_files = ['claude', 'codex', 'curl', 'eragon.sh', 'pi', 'opencode', 'memory-bridge.py', 'bridge-installer.py', 'node', 'npm']
+    if request.get('expectStorage') or 'savedCredentials' in request or request.get('symlinkCredentials') or request.get('expectMemoryRegistration'):
         expected_files.append('config')
+    if request.get('expectMemoryData') or request.get('memoryCached'):
+        expected_files.append('data')
     if 'manifest' in request:
         manifest_path = root / 'compatibility.json'
         manifest_path.write_text(json.dumps(request['manifest']))
@@ -215,6 +282,8 @@ if os.environ.get('CHECK_MEMORY_CHILD') == '1':
     client_prompts_seen = 0
     sent_gateway = False
     sent_remember = False
+    memory_choices = iter(request.get("memoryChoices", [""]))
+    memory_prompts_seen = 0
     key_actions = iter(request.get("keyActions", [""]))
     key_prompts_seen = 0
     deadline = time.monotonic() + 8
@@ -229,6 +298,11 @@ if os.environ.get('CHECK_MEMORY_CHILD') == '1':
             os.write(fd, (request.get('gatewayInput', '') + '\n').encode()); sent_gateway = True
         if not sent_remember and b'Remember API key locally (owner-only plaintext file)? [y/N]: ' in transcript:
             os.write(fd, (request.get('rememberChoice', '') + '\n').encode()); sent_remember = True
+        memory_count = transcript.count(b'Memory setup [1]: ')
+        if memory_count > memory_prompts_seen:
+            action = next(memory_choices, '')
+            os.write(fd, b'\x03' if action == 'INTERRUPT' else (action + '\n').encode())
+            memory_prompts_seen = memory_count
         key_count = transcript.count(b'Key action [1]: ')
         if key_count > key_prompts_seen:
             action = next(key_actions, '')

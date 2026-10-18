@@ -9,12 +9,13 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--remember-key|--update-key|--forget-key]
+Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--memory] [--remember-key|--update-key|--forget-key]
 
   --client NAME   claude, codex, pi or opencode; skip the interactive client menu.
   --endpoint URL  Gateway base URL (non-Claude clients also accept a trailing /v1).
   --model ID      Use this model directly, without fetching a model list.
   --search TEXT   Start the model menu with a case-insensitive literal search.
+  --memory        Automatically install/register Eragon Memory for this client.
   --remember-key  Save this Gateway and key locally (owner-only plaintext file).
   --update-key    Prompt for a replacement key for this Gateway, save on launch.
   --forget-key    Delete all locally remembered Gateway credentials and exit.
@@ -39,7 +40,7 @@ endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
 client=${ERAGON_CLIENT-}
-search_query=''; remember_key=0; forget_key=0; prompted_key=0; update_key=0; using_saved_key=0
+search_query=''; remember_key=0; forget_key=0; prompted_key=0; update_key=0; using_saved_key=0; memory_setup=ask
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --endpoint|--model|--context-window|--client|--search)
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
         --context-window) context_limit=$2 ;;
       esac
       shift 2 ;;
+    --memory) memory_setup=on; shift ;;
     --remember-key) remember_key=1; shift ;;
     --update-key) update_key=1; remember_key=1; shift ;;
     --forget-key) forget_key=1; shift ;;
@@ -455,6 +457,71 @@ if [[ "$remember_key" == 1 ]]; then
   printf 'Gateway and key remembered locally. Use --forget-key to remove all saved credentials.\n'
 fi
 
+# Keep a previously installed bridge reachable even when setup is skipped.
+memory_dir="${XDG_DATA_HOME:-$HOME/.local/share}/eragon-router/memory"
+memory_binary="$memory_dir/node_modules/.bin/eragon-context-mcp"
+# Opt-in setup writes a non-secret MCP registration for this client only.
+if [[ "$memory_setup" == ask && -t 0 && -t 1 ]]; then
+  printf '\nSet up Eragon Memory? Requires an Eragon Gateway with Memory access.\n  1) Skip setup (default)\n  2) Install or reconnect Memory\n'
+  while true; do
+    read -r -p 'Memory setup [1]: ' memory_choice || fail 'Memory setup cancelled.'
+    case "${memory_choice:-1}" in
+      1) memory_setup=off; break ;;
+      2) memory_setup=on; break ;;
+      *) printf 'Enter 1 or 2.\n' ;;
+    esac
+  done
+fi
+if [[ "$memory_setup" == on ]]; then
+  command -v node >/dev/null 2>&1 || fail 'Memory requires Node.js 22.19 or later. Install it and retry with --memory.'
+  node_version=$(node --version) || fail 'Could not read Node.js version.'
+  printf '%s' "$node_version" | jq -eRs '
+    capture("\\Av(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)\\z") |
+    [.major,.minor,.patch] | map(tonumber) | . >= [22,19,0]
+  ' >/dev/null || fail 'Memory requires Node.js 22.19 or later.'
+  if [[ "$client" == pi ]]; then
+    pi_help=$(pi --help) || fail 'Could not check Pi MCP support.'
+    [[ "$pi_help" == *--no-mcp* ]] || fail 'Memory requires Pi with built-in MCP support. Update Pi, or skip Memory setup.'
+    unset pi_help
+  fi
+  # Pin the public bridge source so installs are repeatable. No global npm install.
+  memory_revision=575d1617d181f2fcaefa91f648dee111a2959cb1
+  if [[ ! -x "$memory_binary" || ! -f "$memory_dir/source-revision" ]] ||
+     [[ "$(cat "$memory_dir/source-revision" 2>/dev/null)" != "$memory_revision" ]]; then
+    command -v npm >/dev/null 2>&1 || fail 'Memory requires npm. Install npm and retry with --memory.'
+    printf 'Installing Eragon Memory locally…\n'
+    (umask 077; mkdir -p -- "$memory_dir")
+    # Package downloads and dependency installation do not receive the Gateway key.
+    if ! (
+      unset ERAGON_API_KEY ERAGON_ROUTER_TOKEN ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY
+      npm install --prefix "$memory_dir" --ignore-scripts --no-audit --no-fund \
+        "https://github.com/eragon-corp/eragon-context-mcp/archive/$memory_revision.tar.gz"
+    ); then fail 'Could not install Eragon Memory. Check npm permissions and network access, then retry.'; fi
+    [[ -x "$memory_binary" ]] || fail 'Memory installation did not provide eragon-context-mcp.'
+    printf '%s\n' "$memory_revision" > "$memory_dir/source-revision"
+  fi
+  # The installer registers a command name; make this cached binary available to
+  # the client and its MCP children without changing the user's shell profile.
+  export PATH="$memory_dir/node_modules/.bin:$PATH"
+  memory_agent=$client
+  if [[ "$client" == claude ]]; then memory_agent=claude-code; fi
+  if ! (
+    if [[ "$client" == claude ]]; then
+      export ANTHROPIC_BASE_URL="$endpoint" ANTHROPIC_AUTH_TOKEN="$eragon_key"
+      unset ERAGON_API_KEY ANTHROPIC_API_KEY
+    else
+      export ERAGON_API_KEY="$eragon_key"
+      unset ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY
+    fi
+    "$memory_binary" install --agent "$memory_agent" --url "$credential_endpoint"
+  ); then fail 'Could not register Eragon Memory. Resolve the configuration error and retry with --memory.'; fi
+  printf 'Eragon Memory registered for %s. Your key must have Memory access.\n' "$client_label"
+fi
+
+if [[ "$memory_setup" != on && -x "$memory_binary" ]]; then
+  export PATH="$memory_dir/node_modules/.bin:$PATH"
+fi
+
 # The model provider and an already configured Memory bridge must share the
 # selected credential. Export only after discovery and key updates are complete.
 if [[ "$client" != claude ]]; then
@@ -477,6 +544,9 @@ if [[ "$client" == pi || "$client" == opencode ]]; then
          models:{($model):{name:$model,limit:{context:$context,output:$output},
            modalities:{input:["text"],output:["text"]}}}}}}')
     export OPENCODE_CONFIG_CONTENT
+    if [[ "${client_version%%.*}" -ge 2 ]]; then
+      exec opencode mini --standalone --model "eragon_router/$selected"
+    fi
     exec opencode --model "eragon_router/$selected"
   fi
 
