@@ -1,201 +1,154 @@
 # Eragon Router
 
-Start Claude Code, Codex, Pi Agent or OpenCode through a configurable HTTPS model gateway. No service endpoint is built in.
-Requires macOS or Linux, Bash 3.2+, curl, jq, an API key for the selected endpoint, and the chosen CLI: Claude Code 2.1.302+, Codex 0.160.0+, Pi 0.73.1+ or OpenCode 1.3.7+. Only the selected CLI is required.
+Connect Claude Code, Codex, Pi Agent, or OpenCode to your model Gateway from one interactive launcher. Choose a client, enter your Gateway URL and API key, and find the model you want to use.
 
-Download [eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh), then run it from your project folder:
+## Get started
 
-Run this command, enter your Gateway URL, then choose a client (Enter selects Claude Code):
+You need:
+
+- macOS or Linux with Bash 3.2+, `curl`, and `jq`.
+- A Gateway URL and an API key with access to your chosen model, provided by your administrator.
+- One of the supported clients installed. You only need the client you plan to use.
+
+| Client | Minimum supported version |
+| --- | --- |
+| Claude Code | 2.1.302 |
+| Codex | 0.160.0 |
+| Pi Agent | 0.73.1 |
+| OpenCode | 1.3.7 |
+
+1. [Download eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh) and save it to your Downloads folder.
+2. Open a terminal in the project you want to work on.
+3. Run:
+
+   ```bash
+   bash ~/Downloads/eragon.sh
+   ```
+
+The launcher guides you through these steps:
+
+1. **Enter your Gateway URL.** Use the HTTPS base URL supplied by your administrator. No Gateway address is built in.
+2. **Choose a client.** Select Claude Code, Codex, Pi Agent, or OpenCode.
+3. **Enter your API key.** Input is hidden, so nothing appears as you type or paste.
+4. **Choose a model.** Enter a number, or type `/keyword` to search.
+5. **Choose whether to remember your key.** Enter `y` to save it locally, or press Enter to use it for this run only.
+
+Your selected client then opens in your current project folder.
+
+## Next time you run it
+
+Run the same command:
 
 ```bash
 bash ~/Downloads/eragon.sh
 ```
 
-You can also pass `--endpoint`. **Every `gateway.example.com` URL below is a placeholder; replace it with your real Gateway URL.**
-
-To skip the client menu and start Codex directly:
-
-```bash
-bash ~/Downloads/eragon.sh --client codex --endpoint https://gateway.example.com/gw
-```
-
-Paste your key at the hidden prompt and select a model from the screened catalogue. Enter `/keyword` to search model IDs, then choose a number. After selection, you can opt in to remembering the Gateway and key locally; your chosen client then starts. Press Enter to choose the first displayed model. Model availability and access come from your configured gateway at runtime.
-
-## Configuration
-
-All connection values are configurable without editing the script. Remembering credentials is optional.
-
-| Value | Command-line option | Environment | Default |
-| --- | --- | --- | --- |
-| Client | `--client claude\|codex\|pi\|opencode` | `ERAGON_CLIENT` | Interactive menu; `claude` without a terminal |
-| Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Interactive URL prompt; Enter uses the last remembered Gateway |
-| API key | Hidden prompt; `--remember-key` to save | `ERAGON_API_KEY` | Matching saved key, otherwise hidden input |
-| Model search | `--search TEXT` or `/text` in menu | — | Case-insensitive literal substring |
-| Model | `--model ID` | `ERAGON_MODEL` | Fetch, screen and select a model |
-| Context/input capacity | `--context-window TOKENS` | `ERAGON_CONTEXT_WINDOW` | Catalogue metadata, otherwise conservative fallback |
-
-Options override environment values. The endpoint must be an HTTPS base URL without credentials, a query, or a fragment. Trailing slashes are removed. Use the gateway base URL without `/v1`. Codex, Pi and OpenCode also accept a trailing `/v1`; it is normalized before discovery and provider configuration.
-
-For example, configure an endpoint and model, then enter the key at the hidden prompt:
-
-```bash
-bash ~/Downloads/eragon.sh \
-  --endpoint https://gateway.example.com/gw \
-  --model claude-sonnet-5
-```
-
-Alternatively, configure the endpoint and model in your shell, and provide `ERAGON_API_KEY` through your secret manager or parent process environment:
-
-```bash
-export ERAGON_ENDPOINT=https://gateway.example.com/gw
-export ERAGON_MODEL=claude-sonnet-5
-bash ~/Downloads/eragon.sh
-```
-
-Set `--client` or `ERAGON_CLIENT` to skip the client menu. With the client, endpoint, model and key configured, the launcher skips its own prompts and terminal checks. Without a terminal, an unspecified client remains `claude` for compatibility. Each client retains its normal terminal requirements. An explicit model ID bypasses `/v1/models`, so custom model aliases and endpoints without model discovery work too. The selected endpoint decides whether that model is available. If no model is configured, the launcher fetches `/v1/models` using the key and screens the returned capability metadata locally and offers usable models interactively.
-
-There is deliberately no `--api-key` argument: command-line secrets can appear in process listings and shell history. Do not paste literal keys into shell commands or manually maintained project config files. Existing `ANTHROPIC_*` and `OPENAI_*` variables are not used as configuration inputs; use the `ERAGON_*` values above.
-
-Run `bash eragon.sh --help` for usage.
-
-## Remembering credentials and searching models
-
-After entering a new key and selecting a usable model, the launcher asks `Remember API key locally (owner-only plaintext file)? [y/N]`. Enter `y` to remember it, or Enter to keep it in memory for this run. `--remember-key` opts in without that question, including for an environment-provided key. Failed discovery or capacity validation does not save a new key.
-
-Credentials are stored as **plaintext** in `${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json`, inside a directory with mode `700`, with file mode `600`. This is a local convenience file, not encrypted storage or an OS keychain. Credentials are indexed by normalized Gateway URL (trailing `/v1` shares the same key); switching hosts or base paths never silently reuses another Gateway's key. An explicit `ERAGON_API_KEY` overrides a saved key; use `--remember-key` to save that replacement. Without `--endpoint`, enter a new URL or press Enter to reuse the last remembered Gateway. Noninteractive launches still require an explicit endpoint.
-
-When an interactive launch finds a saved key for the selected Gateway, it shows:
+If you remembered credentials, press Enter at the Gateway prompt to reuse the saved address. After choosing a client, you can use the saved key or update it:
 
 ```text
-1) Use saved key
-2) Update saved key
-q) Quit
+API key saved for this Gateway:
+  1) Use saved key
+  2) Update saved key
+  q) Quit
 Key action [1]:
 ```
 
-Press Enter to reuse it or choose `2` to enter and save a replacement through the hidden prompt. Quitting, cancelling, or failing model discovery preserves the saved key. No key value is displayed. An explicit environment key and noninteractive launches bypass this menu.
+Press Enter to continue with the saved key. Choose `2` to enter a replacement. Updates apply only to the selected Gateway; other saved Gateways keep their own keys. Cancelling or failing to load the model list preserves the old key.
 
-To go directly to replacing the key for one Gateway, run:
+To use a different Gateway, enter its URL at the first prompt. A key saved for another Gateway is not automatically reused.
+
+## Find a model
+
+The model menu shows models available through your Gateway and key. Models that explicitly declare incompatible capabilities are excluded.
+
+| Input | Action |
+| --- | --- |
+| A model number | Select that model from the current results |
+| Enter | Select the first displayed model |
+| `/keyword` | Search model IDs, ignoring letter case |
+| `/` | Clear the search |
+| `m` | Show all usable models, including unverified entries |
+
+For example, enter `/sonnet` to find IDs containing `sonnet`. Search runs locally and does not send additional requests to the Gateway.
+
+A model marked **unverified** has incomplete compatibility information. A model marked **capabilities declared; not tested** has the required metadata but has not been tested by the launcher. Neither label guarantees that every client feature will work. Ask your administrator which models are supported for your client.
+
+## Manage your API key
+
+Saving is optional. Remembered Gateway URLs and keys are stored in a **local plaintext file**:
+
+```text
+~/.config/eragon-router/credentials.json
+```
+
+If `XDG_CONFIG_HOME` is set, the file is stored under that directory instead. The launcher sets the directory permissions to `700` and the file permissions to `600`, limiting access to your user account. This is not encrypted storage; anyone with sufficient local privileges can read it.
+
+You can update a saved key from the interactive menu, or go directly to the replacement flow:
 
 ```bash
 bash ~/Downloads/eragon.sh --update-key
 ```
 
-Enter the Gateway URL (or Enter for the last remembered Gateway), choose a client, and paste the new key at the hidden prompt. This option ignores saved and environment-provided keys, saves the replacement after successful selection/capacity validation, and starts the client. It keeps other Gateways' keys. Cancelling or failing discovery keeps the old key; no extra inference request is used to validate credentials. You can pass `--endpoint URL` to target a specific Gateway.
-
-Remove **all** remembered Gateway credentials:
+To remove **all** remembered Gateway credentials:
 
 ```bash
 bash ~/Downloads/eragon.sh --forget-key
 ```
 
-In the model menu, type `/keyword` to search all usable models, including unverified entries, by a case-insensitive literal substring. Type `/` to clear the search or `m` to show all models. The displayed numbers always refer to the current results. `--search keyword` starts with a filter already applied. Searching stays local and makes no extra catalogue or inference requests; unsupported entries remain excluded. An explicit `--model` bypasses the menu and search.
+Keys are not displayed or placed in command arguments. Do not paste a key into a terminal command, commit it to a repository, or include it in a support request.
 
-## Codex adapter
+## Optional shortcuts
 
-The Codex adapter uses a custom Responses provider via CLI `-c` overrides. It does not run `codex login`, modify `config.toml` or `auth.json`, or put the key in command arguments. The key is exported as `ERAGON_ROUTER_TOKEN` and the provider receives only that environment variable's name. `--no-daemon` keeps authentication in the launched process tree rather than relying on an already-running daemon's environment. Existing Codex sandbox and approval policies remain in effect.
-
-The gateway must implement **`/v1/responses` with SSE streaming, function calls, and tool-result follow-ups**. A Chat Completions-only or Anthropic Messages-only gateway is insufficient; this script does not translate protocols. WebSocket transport and hosted web search are disabled for this adapter; reasoning summaries are set to `none`. A successful launch does not certify model/tool compatibility. See the [official provider configuration](https://learn.chatgpt.com/docs/config-file/config-advanced#custom-model-providers).
-
-Codex screening requires explicit `capabilities.responses` or `supports_responses` (top level, under `capabilities`, or in `model_info`) in addition to the common capabilities to label a model as a candidate. Explicit false excludes it, including conflicting duplicate entries. Missing Responses metadata keeps it unverified. Claude compatibility certificates are ignored for Codex.
-
-Capacity comes from the same catalogue fields and `--context-window` override. Codex accepts a declared limit of at least 4096 tokens, sets `model_context_window`, and compacts at 80% using `model_auto_compact_token_limit` with total-context accounting. Missing capacity produces a warning and a 125K assumption; supply the real limit for smaller models. Explicit `--model` still skips discovery, so configure its capacity explicitly when known:
+Choose a client without the client menu:
 
 ```bash
-bash ~/Downloads/eragon.sh --client codex \
-  --endpoint https://gateway.example.com/gw \
-  --model example/coder --context-window 64000
+bash ~/Downloads/eragon.sh --client codex
 ```
 
-The Codex adapter does not apply Claude-specific output limits or a fabricated Codex output-limit setting. The selected model and gateway still govern output and reasoning support. Capacity settings help schedule compaction; they cannot prevent every overflow or make a gateway's smaller fallback model accept a larger request. Restart through the launcher after changing model or capacity.
+The available client names are `claude`, `codex`, `pi`, and `opencode`.
 
-## Pi Agent and OpenCode adapters
-
-The client menu includes **3) Pi Agent** and **4) OpenCode**. Use `--client pi` or `--client opencode` to skip it. Both adapters require a gateway implementing **`/v1/chat/completions` with streaming, tool calls and tool-result follow-ups**. They use Chat Completions even for Claude or GPT model IDs; no protocol is inferred from the name. Metadata alone does not establish wire compatibility.
-
-- Pi loads a small temporary provider extension through `--extension`. The extension registers the selected model from environment-provided JSON, with `contextWindow`, `maxTokens`, text input and thinking disabled. The API key is an environment reference (legacy Pi 0.x syntax, or explicit interpolation for Pi 1.x). No `models.json` or `auth.json` is modified. The parent launcher removes the temporary extension on exit, including a failing client; forced `SIGKILL` can leave this non-secret file behind. Pi retains its native compaction settings. The configured minimum is 32K to leave room for Pi's default compaction reserve. The custom model's zero cost metadata means **pricing is unknown**, not free Gateway usage. See [Pi provider registration](https://pi.dev/docs/latest/custom-provider).
-- OpenCode receives inline `OPENCODE_CONFIG_CONTENT` with a custom `@ai-sdk/openai-compatible` provider and `{env:ERAGON_ROUTER_TOKEN}` credential reference. It pins the main and small model to the selected model, declares text modalities and context/output limits, and enables compaction with a 20% reserve. No project/global config or login file is written by the launcher. Existing OpenCode settings still merge with inline config, and managed configuration can take precedence. See [OpenCode configuration](https://opencode.ai/docs/config/).
-
-Both adapters accept the common capacity fields or `--context-window`. Missing capacity warns and assumes 125K. Output is capped at the smaller of the declared limit, 8192, or one quarter of the context window. They require an explicit `capabilities.chat_completions` or `supports_chat_completions` (top level, under `capabilities`, or in `model_info`) along with the common capabilities to appear as a candidate. Missing protocol metadata stays unverified; explicit false excludes the model, including conflicts across duplicate IDs. Claude verification records are not used for either client.
-
-The launcher does not install either client, call its login command, or add paid inference probes. Each client retains its normal session storage, logging and tool behavior; the launcher's credential handling does not disable those features. Real Gateway text/tool inference must still be verified separately.
-
-## Fast capability screening
-
-Startup makes **one catalogue request**, not a paid inference request per model. Screening uses that response locally; it never guesses compatibility from a model name.
-
-- **Verified**: an exact record in your optional local compatibility file matches the endpoint SHA-256, model ID, installed Claude Code version, and adapter version.
-- **Capabilities declared; not tested**: text input/output, tools and streaming are all explicitly declared. This is a candidate, not a certification.
-- **Unverified**: required metadata is missing. Press `m` to show these models. If every model is unverified, they are displayed with a warning so minimal `/v1/models` endpoints remain usable.
-- **Unsupported**: an explicit false for a required capability, text excluded from declared modalities, or a dedicated embedding/image/audio/video/rerank/moderation mode excludes the model. Negative declarations win conflicts, including duplicate model IDs.
-
-Recognized fields include `capabilities.tools`, `capabilities.streaming`, `capabilities.text_input`, `capabilities.text_output`; `supports_function_calling` and `supports_streaming` at the top level, under `capabilities`, or in `model_info`; and `input_modalities` / `output_modalities` arrays at the top level or in `architecture`. `supported_modalities` is also recognized for input. Missing or malformed fields stay unknown. An ID-only catalogue does not supply enough metadata to certify even a Claude model.
-
-Models named `claude-*` use the native profile by default. Other IDs use the basic profile: disable experimental betas, thinking and prompt caching, and select automatic effort. These Claude-specific settings are pinned through CLI settings to override saved project settings. A verified record can select a different profile for a custom alias. These profiles configure the client; they **do not translate protocols**. The gateway must expose Anthropic Messages for the selected model. Metadata alone cannot guarantee that tool execution works.
-
-An explicit `--model` or `ERAGON_MODEL` bypasses catalogue screening and prints an unverified warning unless a matching verification record exists. It still applies the appropriate client profile.
-
-### Claude Code context capacity and early compaction
-
-The launcher reads positive integer `context_length`, `context_window`, and `max_input_tokens` values at the top level or in `model_info`. It uses the smallest declared limit across fields and duplicate routes. `--context-window` / `ERAGON_CONTEXT_WINDOW` can lower that bound; it cannot increase a declared bound. For explicit model IDs, discovery is still skipped, so supply the actual gateway limit yourself:
+Start with a model search already applied:
 
 ```bash
-bash ~/Downloads/eragon.sh --endpoint https://gateway.example.com/gw \
-  --model example/coder --context-window 200000
+bash ~/Downloads/eragon.sh --search sonnet
 ```
 
-The launcher sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to 80% of that limit, capped at 1M, and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90` to compact earlier where the client supports proactive compaction. It caps most response requests at 8192 output tokens, or a smaller declared `max_output_tokens`. These values are pinned through CLI settings; inherited compaction-disable switches are cleared. This changes compaction timing, not the model's actual capacity. It deliberately does not use `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, whose effect for recognized Claude IDs requires disabling compaction. See the [Claude Code context configuration](https://code.claude.com/docs/en/model-config#context-window-and-auto-compaction).
-
-Without capacity metadata, startup warns and uses a 100K compaction window plus the output cap. This is a conservative fallback, **not proof that the gateway supports that capacity**. The supported auto-compact window starts at 100K; with headroom, declared limits below 125K are refused. Use a larger model for those routes. Missing, stale or inaccurate metadata, a sudden large tool result, or a gateway fallback to a smaller model can still cause an overflow. The launcher makes no extra inference probes.
-
-Use an up-to-date CLI (`claude update`); the launcher requires 2.1.302 or later as its supported baseline. Start a new session after changing model or capacity so the selected model's budget is reapplied. Existing oversized conversations may need a smaller summary in a new session; this cannot retroactively shrink an already rejected request. Capability verification records do not certify context capacity.
-
-### Optional Claude Code compatibility records
-
-The built-in verification list is empty. No model or endpoint is certified merely by installing this script. There are no extra remote manifest downloads, background probes, or on-disk model caches. The launcher remains a single downloadable file.
-
-Copy `compatibility.example.json` to `compatibility.local.json` and set `ERAGON_COMPATIBILITY_FILE` to its path. The local filename is ignored by Git. After testing a real text stream, tool call, tool-result follow-up, multiple turns and cancellation, add a record like this (all values below are placeholders):
-
-```json
-{
-  "schema_version": 1,
-  "verified": [{
-    "endpoint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
-    "model_id": "example/coder",
-    "profile": "basic",
-    "adapter_version": 1,
-    "claude_code_version": "YOUR_INSTALLED_VERSION",
-    "tested_at": "YOUR_TEST_DATE",
-    "evidence": "YOUR_TEST_REPORT_PATH_OR_IDENTIFIER"
-  }]
-}
-```
-
-Hash the HTTPS endpoint with trailing slashes removed, **without a newline** (`printf %s "$ERAGON_ENDPOINT" | shasum -a 256`, or `sha256sum` on Linux). Use the first token from `claude --version` as `claude_code_version`. Do not put API keys or real endpoint URLs in records. Both `native` and `basic` profiles are supported. A conflicting pair of profiles is not treated as verified. Invalid schemas fail before catalogue requests.
-
-Records are trusted, operator-maintained test results, not proof generated by the launcher. Rerun certification and remove stale records whenever the gateway configuration or upstream model changes. Hashes keep endpoint literals out of the file; they do not make a known endpoint secret.
-
-## Credentials and data
-
-By default, the launcher keeps keys in memory. If you opt in to remembering credentials, it writes only the private local credential file described above. It does not write keys into shell history, client settings, or command arguments. When discovering models, it passes the key to curl over stdin. It passes the key to the selected client through its process environment. The key remains accessible to processes with sufficient local privileges. The launcher does not add telemetry or install dependencies.
-
-Claude Code and Codex send inference requests, including conversation and project context they use, to your configured endpoint. The launcher does not change either client's own storage, logging, or data policies. Do not interpret the launcher's credential handling as a promise that the entire client session has no local storage.
-
-Review the downloaded script before running it. Never commit a personal key or paste it into an issue.
-
-## Test
-
-Python 3.9+ and jq are required. Tests use fake executables and fixture credentials in a real terminal; they make no network requests or paid model calls.
+If your administrator supplied an exact model ID, use it directly:
 
 ```bash
-bash -n eragon.sh
-python3 -m unittest discover -s tests -v
+bash ~/Downloads/eragon.sh --model example/coder
 ```
 
-The tests cover hidden input, model selection, invalid input/catalogues, cancellation, terminal restoration, authentication failure, credential handling, and file writes.
+Replace `example/coder` with your actual model ID. This skips the model list and compatibility screening. If the model has a known context limit, add `--context-window TOKENS` using the value supplied by your administrator.
 
-Optional checks against locally installed Pi and OpenCode (temporary isolated settings and fixture credentials, configuration loading only):
+Use `--endpoint URL` to skip the Gateway prompt. Supply the HTTPS base URL without `/v1`; Codex, Pi, and OpenCode also accept a trailing `/v1`.
+
+For scripts and secret-manager integrations, the launcher accepts `ERAGON_CLIENT`, `ERAGON_ENDPOINT`, `ERAGON_MODEL`, `ERAGON_API_KEY`, and `ERAGON_CONTEXT_WINDOW`. Command-line options override matching environment settings; an environment key overrides a saved key. Noninteractive launches require an explicit endpoint, model, and an environment or matching saved key.
+
+See all options with:
 
 ```bash
-python3 tests/check_installed_clients.py
+bash ~/Downloads/eragon.sh --help
 ```
+
+## Troubleshooting
+
+| Message or issue | What to do |
+| --- | --- |
+| `Missing jq`, `Missing curl`, or a missing client | Install the named tool, then run the launcher again. |
+| A client version warning | Update that client. Check which installation your terminal finds if you have multiple versions. |
+| `Could not load models` or a TLS connection error | Check the Gateway URL, network access, and key permissions. Use the real URL supplied by your administrator. |
+| A model is missing | Try `/keyword` or `m`. Ask your administrator whether your key has access and whether the model supports your client. |
+| Your Gateway does not offer a model list | Use `--model` with the exact ID supplied by your administrator. |
+| `Your input exceeds the context window` | Start a fresh session with a shorter summary, or select a model with a larger supported context. If the displayed capacity is wrong, ask your administrator for the actual limit and use `--context-window`. |
+| The client starts but requests or tool calls fail | Confirm that the Gateway supports the selected client's API and that the key can use the selected model. |
+
+The Gateway must support Anthropic Messages for Claude Code, Responses for Codex, or Chat Completions for Pi and OpenCode, including streaming and tool calls. Eragon Router configures the client; it does not translate between these APIs. Model availability, usage charges, and access permissions are managed by your Gateway. Pi may display a zero cost estimate for custom models; Gateway usage can still be billed.
+
+## Privacy
+
+Your chosen client sends the conversation and any project context it uses to your configured Gateway. Eragon Router does not add telemetry or change the client's own session storage, logging, or data policies. It does not modify the client's persistent login or configuration files.
+
+When requesting support, share the client name, version, and error message. Remove API keys and sensitive project content first.
+
+For Gateway configuration, capacity handling, compatibility records, and contributor tests, see the [technical reference](docs/technical-reference.md).
