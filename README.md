@@ -5,13 +5,13 @@ Requires macOS or Linux, Bash 3.2+, curl, jq, an API key for the selected endpoi
 
 Download [eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh), then run it from your project folder:
 
-Run this command, then choose a client in the terminal (Enter selects Claude Code):
-
-**Replace `https://gateway.example.com/gw` below with your real Gateway URL. It is a placeholder, not a working service.**
+Run this command, enter your Gateway URL, then choose a client (Enter selects Claude Code):
 
 ```bash
-bash ~/Downloads/eragon.sh --endpoint https://gateway.example.com/gw
+bash ~/Downloads/eragon.sh
 ```
+
+You can also pass `--endpoint`. **Every `gateway.example.com` URL below is a placeholder; replace it with your real Gateway URL.**
 
 To skip the client menu and start Codex directly:
 
@@ -19,17 +19,18 @@ To skip the client menu and start Codex directly:
 bash ~/Downloads/eragon.sh --client codex --endpoint https://gateway.example.com/gw
 ```
 
-Paste your key at the hidden prompt, select a model from the screened catalogue, and your chosen client starts. Press Enter to choose the first displayed model. Model availability and access come from your configured gateway at runtime.
+Paste your key at the hidden prompt and select a model from the screened catalogue. Enter `/keyword` to search model IDs, then choose a number. After selection, you can opt in to remembering the Gateway and key locally; your chosen client then starts. Press Enter to choose the first displayed model. Model availability and access come from your configured gateway at runtime.
 
 ## Configuration
 
-All three connection values are configurable without editing the script or saving a config file.
+All connection values are configurable without editing the script. Remembering credentials is optional.
 
 | Value | Command-line option | Environment | Default |
 | --- | --- | --- | --- |
 | Client | `--client claude\|codex\|pi\|opencode` | `ERAGON_CLIENT` | Interactive menu; `claude` without a terminal |
-| Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Required; no built-in endpoint |
-| API key | Hidden prompt | `ERAGON_API_KEY` | Ask with hidden input |
+| Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Interactive URL prompt; Enter uses the last remembered Gateway |
+| API key | Hidden prompt; `--remember-key` to save | `ERAGON_API_KEY` | Matching saved key, otherwise hidden input |
+| Model search | `--search TEXT` or `/text` in menu | — | Case-insensitive literal substring |
 | Model | `--model ID` | `ERAGON_MODEL` | Fetch, screen and select a model |
 | Context/input capacity | `--context-window TOKENS` | `ERAGON_CONTEXT_WINDOW` | Catalogue metadata, otherwise conservative fallback |
 
@@ -53,9 +54,23 @@ bash ~/Downloads/eragon.sh
 
 Set `--client` or `ERAGON_CLIENT` to skip the client menu. With the client, endpoint, model and key configured, the launcher skips its own prompts and terminal checks. Without a terminal, an unspecified client remains `claude` for compatibility. Each client retains its normal terminal requirements. An explicit model ID bypasses `/v1/models`, so custom model aliases and endpoints without model discovery work too. The selected endpoint decides whether that model is available. If no model is configured, the launcher fetches `/v1/models` using the key and screens the returned capability metadata locally and offers usable models interactively.
 
-There is deliberately no `--api-key` argument: command-line secrets can appear in process listings and shell history. Do not paste literal keys into shell commands or config files. Existing `ANTHROPIC_*` and `OPENAI_*` variables are not used as configuration inputs; use the `ERAGON_*` values above.
+There is deliberately no `--api-key` argument: command-line secrets can appear in process listings and shell history. Do not paste literal keys into shell commands or manually maintained project config files. Existing `ANTHROPIC_*` and `OPENAI_*` variables are not used as configuration inputs; use the `ERAGON_*` values above.
 
 Run `bash eragon.sh --help` for usage.
+
+## Remembering credentials and searching models
+
+After entering a new key and selecting a usable model, the launcher asks `Remember API key locally (owner-only plaintext file)? [y/N]`. Enter `y` to remember it, or Enter to keep it in memory for this run. `--remember-key` opts in without that question, including for an environment-provided key. Failed discovery or capacity validation does not save a new key.
+
+Credentials are stored as **plaintext** in `${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json`, inside a directory with mode `700`, with file mode `600`. This is a local convenience file, not encrypted storage or an OS keychain. Credentials are indexed by normalized Gateway URL (trailing `/v1` shares the same key); switching hosts or base paths never silently reuses another Gateway's key. An explicit `ERAGON_API_KEY` overrides a saved key; use `--remember-key` to replace it. Without `--endpoint`, enter a new URL or press Enter to reuse the last remembered Gateway. Noninteractive launches still require an explicit endpoint.
+
+Remove **all** remembered Gateway credentials:
+
+```bash
+bash ~/Downloads/eragon.sh --forget-key
+```
+
+In the model menu, type `/keyword` to search all usable models, including unverified entries, by a case-insensitive literal substring. Type `/` to clear the search or `m` to show all models. The displayed numbers always refer to the current results. `--search keyword` starts with a filter already applied. Searching stays local and makes no extra catalogue or inference requests; unsupported entries remain excluded. An explicit `--model` bypasses the menu and search.
 
 ## Codex adapter
 
@@ -118,7 +133,7 @@ Use an up-to-date CLI (`claude update`); the launcher requires 2.1.302 or later 
 
 ### Optional Claude Code compatibility records
 
-The built-in verification list is empty. No model or endpoint is certified merely by installing this script. There are no extra remote manifest downloads, background probes, or on-disk caches. The launcher remains a single downloadable file.
+The built-in verification list is empty. No model or endpoint is certified merely by installing this script. There are no extra remote manifest downloads, background probes, or on-disk model caches. The launcher remains a single downloadable file.
 
 Copy `compatibility.example.json` to `compatibility.local.json` and set `ERAGON_COMPATIBILITY_FILE` to its path. The local filename is ignored by Git. After testing a real text stream, tool call, tool-result follow-up, multiple turns and cancellation, add a record like this (all values below are placeholders):
 
@@ -143,9 +158,9 @@ Records are trusted, operator-maintained test results, not proof generated by th
 
 ## Credentials and data
 
-The launcher does not write your key to disk, shell history, Claude settings, or command arguments. When discovering models, it passes the key to curl over stdin. It passes the key to the selected client through its process environment. The key remains accessible to processes with sufficient local privileges. The launcher does not add telemetry or install dependencies.
+By default, the launcher keeps keys in memory. If you opt in to remembering credentials, it writes only the private local credential file described above. It does not write keys into shell history, client settings, or command arguments. When discovering models, it passes the key to curl over stdin. It passes the key to the selected client through its process environment. The key remains accessible to processes with sufficient local privileges. The launcher does not add telemetry or install dependencies.
 
-Claude Code and Codex send inference requests, including conversation and project context they use, to your configured endpoint. The launcher does not change either client's own storage, logging, or data policies. Do not interpret the launcher's no-file-write behavior as a promise that the entire client session has no local storage.
+Claude Code and Codex send inference requests, including conversation and project context they use, to your configured endpoint. The launcher does not change either client's own storage, logging, or data policies. Do not interpret the launcher's credential handling as a promise that the entire client session has no local storage.
 
 Review the downloaded script before running it. Never commit a personal key or paste it into an issue.
 

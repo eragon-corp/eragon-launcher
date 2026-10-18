@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Eragon Router for Claude Code, Codex, Pi and OpenCode. No persistent configuration or credentials.
+# Eragon Router for Claude Code, Codex, Pi and OpenCode. Optional local credential storage.
 # Requires Bash 3.2+, curl and jq. Run from your project: bash eragon.sh
 set +x
 set -euo pipefail
@@ -9,45 +9,92 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
+Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--remember-key|--forget-key]
 
   --client NAME   claude, codex, pi or opencode; skip the interactive client menu.
   --endpoint URL  Gateway base URL (non-Claude clients also accept a trailing /v1).
   --model ID      Use this model directly, without fetching a model list.
+  --search TEXT   Start the model menu with a case-insensitive literal search.
+  --remember-key  Save this Gateway and key locally (owner-only plaintext file).
+  --forget-key    Delete all locally remembered Gateway credentials and exit.
   --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Pi: >=32768; others: >=4096).
   -h, --help      Show this help.
 
 Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDOW, ERAGON_CLIENT.
 Optional ERAGON_COMPATIBILITY_FILE: local verified-profile JSON (no keys/URLs).
-Flags override environment values. An endpoint must be provided explicitly.
-Without a key, prompt with hidden input. Without a model, filter the catalogue.
-Keys are never saved. Pass a key through the environment or hidden prompt,
-not a command-line argument. Fully configured launches skip these prompts.
+Flags override environment values and remembered credentials.
+Without an endpoint, prompt for a Gateway URL (Enter uses the last saved URL).
+Without a key, use a matching saved key or prompt with hidden input.
+Local storage: ${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json.
+Saving is opt-in; keys are plaintext with directory 700 / file 600 permissions.
+Model menu: /text searches all usable models, / clears, m shows unverified.
+Pass keys through the environment or hidden prompt, never command arguments.
 HELP
 }
-unset endpoint selected eragon_key context_limit client
+unset endpoint selected eragon_key context_limit client saved_credentials credential_json
 eragon_key=${ERAGON_API_KEY-}
 unset ERAGON_API_KEY ERAGON_ROUTER_TOKEN
 endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
 client=${ERAGON_CLIENT-}
+search_query=''; remember_key=0; forget_key=0; prompted_key=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --endpoint|--model|--context-window|--client)
+    --endpoint|--model|--context-window|--client|--search)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "Missing value for $1."
       case "$1" in
+        --search) search_query=$2 ;;
         --client) client=$2 ;;
         --endpoint) endpoint=$2 ;;
         --model) selected=$2 ;;
         --context-window) context_limit=$2 ;;
       esac
       shift 2 ;;
+    --remember-key) remember_key=1; shift ;;
+    --forget-key) forget_key=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail 'Unknown option. Run bash eragon.sh --help.' ;;
   esac
 done
-[[ -n "$endpoint" ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
+# This is launcher-owned storage, separate from every client's configuration.
+credential_dir="${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router"
+credential_file="$credential_dir/credentials.json"
+saved_credentials='{"last_endpoint":"","keys":{}}'
+if [[ -e "$credential_dir" || -L "$credential_dir" ]]; then
+  [[ -d "$credential_dir" && ! -L "$credential_dir" && -O "$credential_dir" ]] || fail 'Unsafe credential directory: must be owned by you and not a symlink.'
+  chmod 700 "$credential_dir"
+fi
+if [[ -e "$credential_file" || -L "$credential_file" ]]; then
+  [[ -f "$credential_file" && ! -L "$credential_file" && -O "$credential_file" ]] || fail 'Unsafe credential file: must be owned by you and not a symlink.'
+  chmod 600 "$credential_file"
+  if [[ "$forget_key" == 0 ]]; then
+    command -v jq >/dev/null 2>&1 || fail 'Missing jq.'
+    saved_credentials=$(jq -ecs '
+      if length == 1 and (.[0] | type == "object") then .[0] else error("invalid") end |
+      if (.last_endpoint | type == "string") and (.keys | type == "object") and
+        all(.keys[]; type == "string" and length > 0 and (test("[\\r\\n]") | not))
+      then . else error("invalid") end' "$credential_file" 2>/dev/null) || fail 'Invalid saved credentials. Use --forget-key to remove them.'
+  fi
+fi
+if [[ "$forget_key" == 1 ]]; then
+  rm -f -- "$credential_file"
+  printf 'Remembered Gateway credentials removed.\n'
+  exit 0
+fi
+if [[ -z "$endpoint" ]]; then
+  [[ -t 0 && -t 1 ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
+  command -v jq >/dev/null 2>&1 || fail 'Missing jq.'
+  saved_endpoint=$(printf '%s' "$saved_credentials" | jq -r '.last_endpoint')
+  if [[ -n "$saved_endpoint" ]]; then
+    printf 'Saved Gateway: %s\n' "$saved_endpoint"
+    read -r -p 'Gateway URL [saved]: ' endpoint || fail 'Gateway input cancelled.'
+    endpoint=${endpoint:-$saved_endpoint}
+  else
+    read -r -p 'Gateway URL: ' endpoint || fail 'Gateway input cancelled.'
+  fi
+  [[ -n "$endpoint" ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
+fi
 if [[ -z "$client" ]]; then
   if [[ -t 0 && -t 1 ]]; then
     printf 'Choose a client:\n  1) Claude Code\n  2) Codex\n  3) Pi Agent\n  4) OpenCode\n'
@@ -83,6 +130,12 @@ printf '%s' "$endpoint" | jq -eRs '
 ' >/dev/null || fail 'Endpoint must be an HTTPS base URL without credentials, query or fragment.'
 while [[ "$endpoint" == */ ]]; do endpoint=${endpoint%/}; done
 if [[ "$client" != claude && "$endpoint" == */v1 ]]; then endpoint=${endpoint%/v1}; fi
+# /v1 is a protocol suffix, not a different credential scope.
+credential_endpoint=${endpoint%/v1}
+if [[ -z "$eragon_key" ]]; then
+  eragon_key=$(printf '%s' "$saved_credentials" | jq -r --arg url "$credential_endpoint" '.keys[$url] // ""')
+fi
+unset saved_credentials
 if [[ -n "$selected" ]]; then
   printf '%s' "$selected" | jq -eRs '
     test("\\A[A-Za-z0-9][A-Za-z0-9._:/-]*\\z")
@@ -123,6 +176,7 @@ if [[ -z "$eragon_key" ]]; then
   trap - EXIT INT TERM
   unset terminal_mode
   printf '\n'
+  prompted_key=1
 fi
 [[ -n "$eragon_key" ]] || fail 'An API key is required.'
 # Reject header injection, including pasted carriage returns.
@@ -269,25 +323,40 @@ else
     visible_count=${#models[@]}
     printf 'No verified or fully declared candidates; showing unverified models.\n'
   fi
+  printf 'Search models with /text; / clears the search.\n'
   while true; do
+    view_indices=()
+    if [[ -n "$search_query" ]]; then
+      matching=$(printf '%s' "$classification" | jq -r --arg query "$search_query" '
+        .models | to_entries[] | select(.value.id | ascii_downcase | contains($query | ascii_downcase)) | .key')
+      if [[ -n "$matching" ]]; then
+        while IFS= read -r index; do view_indices+=("$index"); done <<< "$matching"
+      fi
+    else
+      for ((index=0; index<visible_count; index++)); do view_indices+=("$index"); done
+    fi
     printf '\nChoose a model:\n'
-    for ((index=0; index<visible_count; index++)); do
+    for ((position=0; position<${#view_indices[@]}; position++)); do
+      index=${view_indices[position]}
       case "${statuses[index]}" in
         verified) label='verified for this endpoint/client/adapter' ;;
         candidate) label='capabilities declared; not tested' ;;
         *) label='unverified' ;;
       esac
-      printf '  %d) %s [%s]\n' "$((index + 1))" "${models[index]}" "$label"
+      printf '  %d) %s [%s]\n' "$((position + 1))" "${models[index]}" "$label"
     done
+    if [[ "${#view_indices[@]}" == 0 ]]; then printf '  No matching models. Try /another-word or / to clear.\n'; fi
     if [[ "$visible_count" != "${#models[@]}" ]]; then
       printf '  m) Show %d unverified model(s)\n' "$((${#models[@]} - visible_count))"
     fi
     read -r -p 'Model number [1]: ' choice
     choice=${choice:-1}
-    if [[ "$choice" == m ]]; then visible_count=${#models[@]}; continue; fi
+    if [[ "$choice" == /* ]]; then search_query=${choice:1}; continue; fi
+    if [[ "$choice" == m ]]; then visible_count=${#models[@]}; search_query=''; continue; fi
     selected=''
-    for ((index=0; index<visible_count; index++)); do
-      if [[ "$choice" == "$((index + 1))" ]]; then
+    for ((position=0; position<${#view_indices[@]}; position++)); do
+      index=${view_indices[position]}
+      if [[ "$choice" == "$((position + 1))" ]]; then
         selected=${models[index]}; profile=${profiles[index]}; break
       fi
     done
@@ -329,6 +398,38 @@ else
   printf 'Gateway capacity: %s tokens; compaction window: %s; output cap: %s.\n' "$context_limit" "$compact_window" "$output_limit"
 fi
 unset classification rows limits
+
+if [[ "$prompted_key" == 1 && "$remember_key" == 0 ]]; then
+  read -r -p 'Remember API key locally (owner-only plaintext file)? [y/N]: ' remember_choice || fail 'Credential saving cancelled.'
+  case "$remember_choice" in y|Y|yes|YES) remember_key=1 ;; esac
+fi
+if [[ "$remember_key" == 1 ]]; then
+  # Use a private directory and atomic replacement; feed the key over stdin.
+  # Never place it in jq arguments or an exported shell variable.
+  (umask 077; mkdir -p -- "$credential_dir")
+  [[ -d "$credential_dir" && ! -L "$credential_dir" && -O "$credential_dir" ]] || fail 'Unsafe credential directory.'
+  chmod 700 "$credential_dir"
+  credential_tmp=$(mktemp "$credential_dir/.credentials.XXXXXXXX") || fail 'Could not create credential file.'
+  trap 'rm -f -- "$credential_tmp"' EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  if [[ -f "$credential_file" ]]; then
+    [[ ! -L "$credential_file" && -O "$credential_file" ]] || fail 'Unsafe credential file.'
+    credential_source=$credential_file
+  else
+    printf '{"last_endpoint":"","keys":{}}\n' > "$credential_tmp"
+    credential_source=$credential_tmp
+  fi
+  # Read the existing JSON before replacing the destination, including on first save.
+  credential_json=$(printf '%s' "$eragon_key" | jq -Rs --arg url "$credential_endpoint" \
+    --slurpfile saved "$credential_source" '. as $key | $saved[0] | .last_endpoint=$url | .keys[$url]=$key')
+  printf '%s\n' "$credential_json" > "$credential_tmp"
+  chmod 600 "$credential_tmp"
+  mv -f -- "$credential_tmp" "$credential_file"
+  trap - EXIT INT TERM
+  unset credential_json credential_source credential_tmp
+  printf 'Gateway and key remembered locally. Use --forget-key to remove all saved credentials.\n'
+fi
 
 if [[ "$client" == pi || "$client" == opencode ]]; then
   export ERAGON_ROUTER_TOKEN="$eragon_key"

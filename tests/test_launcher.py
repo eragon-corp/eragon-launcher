@@ -442,6 +442,88 @@ class LauncherTests(unittest.TestCase):
             reply = self.run_launcher({}, args=["--client",client,"--model","coder"], noCatalogue=1,interrupt=True)
             self.assertEqual(reply["exit"], 130)
 
+    def test_interactive_gateway_input(self):
+        reply = self.run_launcher({}, provideEndpoint=False, gatewayInput="https://gateway.example.com/gw/",
+                                  args=["--model", "coder"], noCatalogue=1)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("Gateway URL:", reply["output"])
+
+    def test_key_remembered_and_reloaded(self):
+        reply = self.run_launcher({}, args=["--model", "coder"], noCatalogue=1,
+                                  rememberChoice="y", expectStorage=True, relaunch=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertTrue(reply["reloaded"])
+        self.assertEqual(reply["savedEndpoints"], ["https://gateway.example.com/gw"])
+
+    def test_saved_gateway_default_and_client_v1_scope(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{"https://gateway.example.com/gw":"fixture-secret"}}
+        reply = self.run_launcher({}, provideEndpoint=False, savedCredentials=saved,
+                                  args=["--model", "coder"], noCatalogue=1)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("Gateway URL [saved]", reply["output"])
+        self.assertNotIn("Personal API Key", reply["output"])
+        reply = self.run_launcher({}, savedCredentials=saved, noninteractive=True,
+            args=["--client","opencode","--endpoint","https://gateway.example.com/gw/v1/","--model","coder"], noCatalogue=1)
+        self.assertEqual(reply["exit"], 0)
+
+    def test_saved_key_not_sent_to_different_gateway(self):
+        saved = {"last_endpoint":"https://other.example/gw", "keys":{"https://other.example/gw":"fixture-secret"}}
+        reply = self.run_launcher({}, savedCredentials=saved, args=["--model","coder"],
+                                  noCatalogue=1, noninteractive=True)
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertIn("Set ERAGON_API_KEY", reply["output"])
+        self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_remember_flag_and_forget(self):
+        reply = self.run_launcher({}, args=["--model","coder","--remember-key"], noCatalogue=1,
+            environment={"ERAGON_API_KEY":"fixture-secret"}, expectStorage=True, noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertEqual(len(reply["savedEndpoints"]), 1)
+        saved = {"last_endpoint":"https://other.example", "keys":{"https://other.example":"fixture-secret"}}
+        reply = self.run_launcher({}, savedCredentials=saved, args=["--forget-key"],
+                                  provideEndpoint=False, noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertNotIn("savedEndpoints", reply)
+        self.assertIn("removed", reply["output"])
+
+    def test_new_saved_key_preserves_other_gateway(self):
+        saved = {"last_endpoint":"https://other.example", "keys":{"https://other.example":"fixture-secret"}}
+        reply = self.run_launcher({}, savedCredentials=saved, args=["--model","coder"],
+                                  noCatalogue=1, rememberChoice="yes", expectStorage=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertEqual(reply["savedEndpoints"], ["https://gateway.example.com/gw", "https://other.example"])
+
+    def test_unsafe_credential_symlink_refused(self):
+        reply = self.run_launcher({}, args=["--model","coder"], noCatalogue=1,
+                                  symlinkCredentials=True, noninteractive=True)
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertIn("Unsafe credential file", reply["output"])
+
+    def test_failed_discovery_does_not_save_credentials(self):
+        reply = self.run_launcher({}, curlFail=1, args=["--remember-key"])
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertNotIn("savedEndpoints", reply)
+
+    def test_literal_case_insensitive_model_search(self):
+        models = {"data":[{"id":"alpha"}, {"id":"Beta.Coder"}, {"id":"betaXcoder"}]}
+        reply = self.run_launcher(models, choices=["/BETA.", ""])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"model": "Beta.Coder"', reply["output"])
+        reply = self.run_launcher(models, args=["--search","beta."], choices=[""])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"model": "Beta.Coder"', reply["output"])
+
+    def test_search_no_match_clear_and_unverified(self):
+        reply = self.run_launcher({"data":[self.candidate("first"), {"id":"hidden-model"}]},
+                                  choices=["/absent", "1", "/hidden", ""])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("No matching models", reply["output"])
+        self.assertIn('"model": "hidden-model"', reply["output"])
+        reply = self.run_launcher({"data":[{"id":"alpha"},{"id":"beta"}]},
+                                  choices=["/absent", "/", "2"])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"model": "beta"', reply["output"])
+
     def test_cancel_restores_terminal(self):
         reply = self.run_launcher({"data": []}, interrupt=True)
         self.assertEqual(reply["exit"], 130)

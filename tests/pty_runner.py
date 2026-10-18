@@ -136,29 +136,60 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
     environment['EXPECT_NO_CATALOGUE'] = str(request.get('noCatalogue', 0))
     environment['EXPECTED_PROFILE'] = request.get('expectedProfile', '')
     environment['TMPDIR'] = directory
+    environment['XDG_CONFIG_HOME'] = str(root / 'config')
+    credential_dir = root / 'config' / 'eragon-router'
+    credential_file = credential_dir / 'credentials.json'
+    if 'savedCredentials' in request:
+        credential_dir.mkdir(parents=True, mode=0o700)
+        credential_file.write_text(json.dumps(request['savedCredentials']))
+        credential_file.chmod(0o600)
+    if request.get('symlinkCredentials'):
+        credential_dir.mkdir(parents=True, mode=0o700)
+        credential_file.symlink_to(root / 'eragon.sh')
+    def inspect_storage():
+        result = {}
+        if credential_file.exists() and not credential_file.is_symlink():
+            saved = json.loads(credential_file.read_text())
+            assert all(value == 'fixture-secret' for value in saved['keys'].values())
+            assert credential_file.stat().st_mode & 0o777 == 0o600
+            assert credential_dir.stat().st_mode & 0o777 == 0o700
+            result['savedEndpoints'] = sorted(saved['keys'])
+            result['lastEndpoint'] = saved['last_endpoint']
+        if request.get('relaunch'):
+            again = subprocess.run(arguments, cwd=directory, env=environment,
+                                   input='', capture_output=True, text=True, timeout=8)
+            assert again.returncode == 0, again.stdout + again.stderr
+            assert 'Personal API Key' not in again.stdout
+            result['reloaded'] = True
+        return result
+
     expected_files = ['claude', 'codex', 'curl', 'eragon.sh', 'pi', 'opencode']
+    if request.get('expectStorage') or 'savedCredentials' in request or request.get('symlinkCredentials'):
+        expected_files.append('config')
     if 'manifest' in request:
         manifest_path = root / 'compatibility.json'
         manifest_path.write_text(json.dumps(request['manifest']))
         environment['ERAGON_COMPATIBILITY_FILE'] = str(manifest_path)
         expected_files.append('compatibility.json')
-    arguments = ['bash'] + request.get('bashOptions', ['-x']) + ['eragon.sh'] + request.get('args', [])
+    arguments = ['/bin/bash'] + request.get('bashOptions', ['-x']) + ['eragon.sh'] + request.get('args', [])
     if request.get('noninteractive'):
         result = subprocess.run(arguments, cwd=directory, env=environment,
                                 input='', capture_output=True, text=True, timeout=8)
         assert sorted(path.name for path in root.iterdir()) == sorted(expected_files)
-        print(json.dumps({'exit': result.returncode, 'output': result.stdout + result.stderr}))
+        print(json.dumps({'exit': result.returncode, 'output': result.stdout + result.stderr, **inspect_storage()}))
         sys.exit(0)
     pid, fd = pty.fork()
     if pid == 0:
         os.chdir(directory)
-        os.execvpe('bash', arguments, environment)
+        os.execvpe(arguments[0], arguments, environment)
     transcript = b''
     sent_key = False
     choices = iter(request.get('choices', ['']))
     prompts_seen = 0
     client_choices = iter(request.get('clientChoices', ['']))
     client_prompts_seen = 0
+    sent_gateway = False
+    sent_remember = False
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], .1)
@@ -167,6 +198,10 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
         except OSError: break
         if not chunk: break
         transcript += chunk
+        if not sent_gateway and (b'Gateway URL: ' in transcript or b'Gateway URL [saved]: ' in transcript):
+            os.write(fd, (request.get('gatewayInput', '') + '\n').encode()); sent_gateway = True
+        if not sent_remember and b'Remember API key locally (owner-only plaintext file)? [y/N]: ' in transcript:
+            os.write(fd, (request.get('rememberChoice', '') + '\n').encode()); sent_remember = True
         client_count = transcript.count(b'Client number [1]: ')
         if client_count > client_prompts_seen:
             os.write(fd, (next(client_choices, '') + '\n').encode()); client_prompts_seen = client_count
@@ -182,4 +217,4 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
     assert termios.tcgetattr(fd)[3] & termios.ECHO, "Terminal echo was not restored"
     os.close(fd)
     assert sorted(path.name for path in root.iterdir()) == sorted(expected_files)
-    print(json.dumps({'exit': os.waitstatus_to_exitcode(status), 'output': transcript.decode()}))
+    print(json.dumps({'exit': os.waitstatus_to_exitcode(status), 'output': transcript.decode(), **inspect_storage()}))

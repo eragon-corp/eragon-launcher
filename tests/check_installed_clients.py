@@ -42,7 +42,9 @@ for client in ["pi", "opencode"]:
             assert config["model"] == "eragon_router/team/coder"
             provider = config["provider"]["eragon_router"]
             assert provider["options"]["baseURL"] == "https://gateway.example.com/gw/v1"
-            assert provider["options"]["apiKey"] == "fixture-secret"
+            # Newer OpenCode debug output masks credentials; fixture CLI tests
+            # separately assert the exact token inherited by the process.
+            assert provider["options"]["apiKey"] in ["fixture-secret", "***"]
             assert provider["models"]["team/coder"]["limit"] == {"context": 64000, "output": 8192}
             assert config["compaction"]["reserved"] == 12800
         leaks = [str(p.relative_to(root)) for p in root.rglob("*")
