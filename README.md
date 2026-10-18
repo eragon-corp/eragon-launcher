@@ -9,7 +9,7 @@ Download [eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads
 bash ~/Downloads/eragon.sh --endpoint https://gateway.example.com/gw
 ```
 
-Paste your key at the hidden prompt, select one of the Claude models available to that key, and Claude Code starts. Press Enter to choose the first model. Model availability and access come from Gateway at runtime.
+Paste your key at the hidden prompt, select a model from the screened catalogue, and Claude Code starts. Press Enter to choose the first displayed model. Model availability and access come from your configured gateway at runtime.
 
 ## Configuration
 
@@ -19,7 +19,7 @@ All three connection values are configurable without editing the script or savin
 | --- | --- | --- | --- |
 | Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Required; no built-in endpoint |
 | API key | Hidden prompt | `ERAGON_API_KEY` | Ask with hidden input |
-| Model | `--model ID` | `ERAGON_MODEL` | Fetch and select a Claude model |
+| Model | `--model ID` | `ERAGON_MODEL` | Fetch, screen and select a model |
 
 Options override environment values. The endpoint must be an HTTPS base URL without credentials, a query, or a fragment. Trailing slashes are removed. Use the Anthropic-compatible base URL, normally without a `/v1` suffix.
 
@@ -39,11 +39,51 @@ export ERAGON_MODEL=claude-sonnet-5
 bash ~/Downloads/eragon.sh
 ```
 
-With all three values configured, the launcher skips its own prompts and terminal checks. Claude Code retains its normal terminal requirements. An explicit model ID bypasses `/v1/models`, so custom model aliases and endpoints without model discovery work too. The selected endpoint decides whether that model is available. If no model is configured, the launcher fetches `/v1/models` using the key and offers native Claude IDs interactively.
+With all three values configured, the launcher skips its own prompts and terminal checks. Claude Code retains its normal terminal requirements. An explicit model ID bypasses `/v1/models`, so custom model aliases and endpoints without model discovery work too. The selected endpoint decides whether that model is available. If no model is configured, the launcher fetches `/v1/models` using the key and screens the returned capability metadata locally and offers usable models interactively.
 
 There is deliberately no `--api-key` argument: command-line secrets can appear in process listings and shell history. Do not paste literal keys into shell commands or config files. Existing `ANTHROPIC_*` variables are not used as configuration inputs; use the `ERAGON_*` values above.
 
 Run `bash eragon.sh --help` for usage.
+
+## Fast capability screening
+
+Startup makes **one catalogue request**, not a paid inference request per model. Screening uses that response locally; it never guesses compatibility from a model name.
+
+- **Verified**: an exact record in your optional local compatibility file matches the endpoint SHA-256, model ID, installed Claude Code version, and adapter version.
+- **Capabilities declared; not tested**: text input/output, tools and streaming are all explicitly declared. This is a candidate, not a certification.
+- **Unverified**: required metadata is missing. Press `m` to show these models. If every model is unverified, they are displayed with a warning so minimal `/v1/models` endpoints remain usable.
+- **Unsupported**: an explicit false for a required capability, text excluded from declared modalities, or a dedicated embedding/image/audio/video/rerank/moderation mode excludes the model. Negative declarations win conflicts, including duplicate model IDs.
+
+Recognized fields include `capabilities.tools`, `capabilities.streaming`, `capabilities.text_input`, `capabilities.text_output`; `supports_function_calling` and `supports_streaming` at the top level, under `capabilities`, or in `model_info`; and `input_modalities` / `output_modalities` arrays at the top level or in `architecture`. `supported_modalities` is also recognized for input. Missing or malformed fields stay unknown. An ID-only catalogue does not supply enough metadata to certify even a Claude model.
+
+Models named `claude-*` use the native profile by default. Other IDs use the basic profile: disable experimental betas, thinking and prompt caching, and select automatic effort. These settings are pinned through CLI settings to override saved project settings. A verified record can select a different profile for a custom alias. These profiles configure the client; they **do not translate protocols**. The gateway must expose Anthropic Messages for the selected model. Metadata alone cannot guarantee that tool execution works.
+
+An explicit `--model` or `ERAGON_MODEL` bypasses catalogue screening and prints an unverified warning unless a matching verification record exists. It still applies the appropriate client profile.
+
+### Optional compatibility records
+
+The built-in verification list is empty. No model or endpoint is certified merely by installing this script. There are no extra remote manifest downloads, background probes, or on-disk caches. The launcher remains a single downloadable file.
+
+Copy `compatibility.example.json` to `compatibility.local.json` and set `ERAGON_COMPATIBILITY_FILE` to its path. The local filename is ignored by Git. After testing a real text stream, tool call, tool-result follow-up, multiple turns and cancellation, add a record like this (all values below are placeholders):
+
+```json
+{
+  "schema_version": 1,
+  "verified": [{
+    "endpoint_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "model_id": "example/coder",
+    "profile": "basic",
+    "adapter_version": 1,
+    "claude_code_version": "YOUR_INSTALLED_VERSION",
+    "tested_at": "YOUR_TEST_DATE",
+    "evidence": "YOUR_TEST_REPORT_PATH_OR_IDENTIFIER"
+  }]
+}
+```
+
+Hash the HTTPS endpoint with trailing slashes removed, **without a newline** (`printf %s "$ERAGON_ENDPOINT" | shasum -a 256`, or `sha256sum` on Linux). Use the first token from `claude --version` as `claude_code_version`. Do not put API keys or real endpoint URLs in records. Both `native` and `basic` profiles are supported. A conflicting pair of profiles is not treated as verified. Invalid schemas fail before catalogue requests.
+
+Records are trusted, operator-maintained test results, not proof generated by the launcher. Rerun certification and remove stale records whenever the gateway configuration or upstream model changes. Hashes keep endpoint literals out of the file; they do not make a known endpoint secret.
 
 ## Credentials and data
 
@@ -55,7 +95,7 @@ Review the downloaded script before running it. Never commit a personal key or p
 
 ## Test
 
-Python 3 and jq are required. Tests use fake executables and fixture credentials in a real terminal; they make no network requests or paid model calls.
+Python 3.9+ and jq are required. Tests use fake executables and fixture credentials in a real terminal; they make no network requests or paid model calls.
 
 ```bash
 bash -n eragon.sh

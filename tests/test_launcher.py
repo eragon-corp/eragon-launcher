@@ -1,4 +1,5 @@
 import json
+import hashlib
 import pathlib
 import subprocess
 import sys
@@ -15,6 +16,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         reply = json.loads(result.stdout)
         self.assertNotIn("fixture-secret", reply["output"])
+        self.assertLessEqual(reply["output"].count("FIXTURE_CATALOGUE_REQUEST"), 1)
         return reply
 
     def test_syntax(self):
@@ -22,7 +24,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_selection_and_no_persistence(self):
         reply = self.run_launcher({"data": [{"id": "claude-sonnet-5"}, {"id": "claude-opus-5"},
-                                                 {"id": "gpt-6"}, {"id": "claude-$(touch injected)"}]}, choices=["2"])
+                                                 {"id": "gpt-6", "supports_function_calling": False}, {"id": "claude-$(touch injected)"}]}, choices=["2"])
         self.assertEqual(reply["exit"], 0)
         self.assertIn('"model": "claude-sonnet-5"', reply["output"])
         self.assertNotIn("gpt-6", reply["output"])
@@ -34,11 +36,17 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("Enter one of the model numbers", reply["output"])
 
     def test_unusable_catalogue(self):
-        for models in ["invalid json", {"data": []}, {"data": [{"id": "gpt-6"}]}]:
+        for models in ["invalid json", {"data": []}, {"data": [{"id": "embed", "mode": "embedding"}]}]:
             with self.subTest(models=models):
                 reply = self.run_launcher(models)
                 self.assertNotEqual(reply["exit"], 0)
                 self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_multiple_catalogue_documents_are_rejected(self):
+        document = json.dumps({"data": [{"id": "claude-fixture"}]})
+        reply = self.run_launcher(document + document)
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertNotIn("LAUNCHED", reply["output"])
 
     def test_model_line_breaks(self):
         for model in ["claude-sonnet-5\n", "\nclaude-sonnet-5", "claude-sonnet-5\r", "claude-\nsonnet-5"]:
@@ -128,6 +136,108 @@ class LauncherTests(unittest.TestCase):
                 reply = self.run_launcher({}, args=args, noninteractive=True)
                 self.assertNotEqual(reply["exit"], 0)
                 self.assertNotIn("LAUNCHED", reply["output"])
+
+    def candidate(self, model="other/coder"):
+        return {"id": model, "capabilities": {"tools": True, "streaming": True},
+                "input_modalities": ["text"], "output_modalities": ["text"]}
+
+    def certificate(self, **overrides):
+        record = {"endpoint_sha256": hashlib.sha256(b"https://gateway.example.com/gw").hexdigest(),
+                  "model_id": "other/coder", "profile": "basic", "adapter_version": 1,
+                  "claude_code_version": "2.1.0", "tested_at": "fixture-only", "evidence": "fixture-only"}
+        record.update(overrides)
+        return {"schema_version": 1, "verified": [record]}
+
+    def test_capability_candidates_hide_unknown_and_block_unsupported(self):
+        models = {"data": [self.candidate(), {"id": "unknown-model"},
+                           self.candidate("no-tools") | {"supports_function_calling": False},
+                           {"id": "image", "mode": "image_generation"}]}
+        reply = self.run_launcher(models)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("capabilities declared; not tested", reply["output"])
+        self.assertIn("m) Show 1 unverified", reply["output"])
+        self.assertNotIn("unknown-model", reply["output"])
+        self.assertNotIn("no-tools", reply["output"])
+        self.assertIn("2 unsupported", reply["output"])
+        self.assertEqual(reply["output"].count("FIXTURE_CATALOGUE_REQUEST"), 1)
+        self.assertIn('"model": "other/coder"', reply["output"])
+
+    def test_show_more_can_select_unknown(self):
+        reply = self.run_launcher({"data": [self.candidate(), {"id": "unknown-model"}]}, choices=["m", "2"])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("unknown-model [unverified]", reply["output"])
+        self.assertIn('"model": "unknown-model"', reply["output"])
+
+    def test_missing_metadata_is_unverified_even_for_claude(self):
+        reply = self.run_launcher({"data": [{"id": "claude-fixture"}, {"id": "gpt-fixture"}]})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("showing unverified", reply["output"])
+        self.assertIn("claude-fixture [unverified]", reply["output"])
+        self.assertIn("gpt-fixture [unverified]", reply["output"])
+
+    def test_false_capabilities_and_nonchat_modes_always_exclude(self):
+        cases = [self.candidate() | {"supports_streaming": False},
+                 self.candidate() | {"input_modalities": ["image"]},
+                 self.candidate() | {"output_modalities": ["audio"]},
+                 self.candidate() | {"mode": "embedding"}]
+        for model in cases:
+            with self.subTest(model=model):
+                reply = self.run_launcher({"data": [model]}, manifest=self.certificate())
+                self.assertNotEqual(reply["exit"], 0)
+                self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_duplicate_conflicts_cannot_hide_explicit_false(self):
+        reply = self.run_launcher({"data": [self.candidate(), {"id": "other/coder", "supports_function_calling": False}]})
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_nested_metadata_and_malformed_metadata(self):
+        reply = self.run_launcher({"data": [{"id": "nested", "model_info": {"supports_function_calling": True, "supports_streaming": True},
+                                             "architecture": {"input_modalities": ["text"], "output_modalities": ["text"]}},
+                                            {"id": "unknown", "capabilities": False, "model_info": "bad"}]})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("nested [capabilities declared; not tested]", reply["output"])
+        self.assertNotIn("unknown [", reply["output"])
+
+    def test_certificate_matches_endpoint_model_client_and_adapter(self):
+        reply = self.run_launcher({"data": [{"id": "other/coder"}]}, manifest=self.certificate())
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("verified for this endpoint/client/adapter", reply["output"])
+        for overrides in [{"endpoint_sha256": "0" * 64}, {"model_id": "other-model"}, {"claude_code_version": "0.0.0"}]:
+            with self.subTest(overrides=overrides):
+                reply = self.run_launcher({"data": [{"id": "other/coder"}]}, manifest=self.certificate(**overrides))
+                self.assertEqual(reply["exit"], 0)
+                self.assertNotIn("verified for this endpoint/client/adapter", reply["output"])
+                self.assertIn("other/coder [unverified]", reply["output"])
+
+    def test_certificate_can_select_native_profile_for_alias(self):
+        reply = self.run_launcher({}, args=["--model", "other/coder"], noCatalogue=1,
+                                  manifest=self.certificate(profile="native"), expectedProfile="native")
+        self.assertEqual(reply["exit"], 0)
+        self.assertNotIn("have not been verified", reply["output"])
+
+    def test_conflicting_certificates_are_not_verified(self):
+        manifest = self.certificate()
+        manifest["verified"].append(self.certificate(profile="native")["verified"][0])
+        reply = self.run_launcher({"data": [{"id": "other/coder"}]}, manifest=manifest)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("other/coder [unverified]", reply["output"])
+        self.assertNotIn("verified for this endpoint/client/adapter", reply["output"])
+
+    def test_malformed_capability_fields_remain_unknown(self):
+        reply = self.run_launcher({"data": [{"id": "other/coder", "supports_function_calling": "true",
+                                            "supports_streaming": 1, "supported_modalities": [123],
+                                            "input_modalities": [None], "output_modalities": "text"}]})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("other/coder [unverified]", reply["output"])
+        self.assertNotIn("capabilities declared; not tested", reply["output"])
+
+    def test_invalid_manifest_fails_before_catalogue_request(self):
+        for manifest in [{}, self.certificate(adapter_version=2), self.certificate(endpoint_sha256="not-a-hash"), self.certificate() | {"api_key": "do-not-store-credentials"}]:
+            with self.subTest(manifest=manifest):
+                reply = self.run_launcher({"data": [self.candidate()]}, manifest=manifest, noCatalogue=1)
+                self.assertNotEqual(reply["exit"], 0)
+                self.assertIn("Invalid compatibility file", reply["output"])
 
     def test_cancel_restores_terminal(self):
         reply = self.run_launcher({"data": []}, interrupt=True)
