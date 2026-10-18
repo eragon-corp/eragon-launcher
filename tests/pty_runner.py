@@ -150,7 +150,10 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
         result = {}
         if credential_file.exists() and not credential_file.is_symlink():
             saved = json.loads(credential_file.read_text())
-            assert all(value == 'fixture-secret' for value in saved['keys'].values())
+            if 'expectedSavedKeys' in request:
+                assert saved['keys'] == request['expectedSavedKeys']
+            else:
+                assert all(value == 'fixture-secret' for value in saved['keys'].values())
             assert credential_file.stat().st_mode & 0o777 == 0o600
             assert credential_dir.stat().st_mode & 0o777 == 0o700
             result['savedEndpoints'] = sorted(saved['keys'])

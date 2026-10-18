@@ -499,6 +499,31 @@ class LauncherTests(unittest.TestCase):
         self.assertNotEqual(reply["exit"], 0)
         self.assertIn("Unsafe credential file", reply["output"])
 
+    def test_update_key_replaces_only_selected_gateway(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{
+            "https://gateway.example.com/gw":"old-key", "https://other.example":"other-key"}}
+        expected = dict(saved["keys"], **{"https://gateway.example.com/gw":"fixture-secret"})
+        reply = self.run_launcher({"data":[{"id":"coder"}]}, savedCredentials=saved,
+                                  args=["--update-key"], expectedSavedKeys=expected,
+                                  environment={"ERAGON_API_KEY":"ignored-environment-key"})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn("Personal API Key", reply["output"])
+        self.assertNotIn("Remember API key locally", reply["output"])
+
+    def test_update_key_failure_or_cancellation_preserves_old_key(self):
+        saved = {"last_endpoint":"https://gateway.example.com/gw", "keys":{"https://gateway.example.com/gw":"old-key"}}
+        for options in [{"interrupt":True}, {"curlFail":1}]:
+            reply = self.run_launcher({"data":[{"id":"coder"}]}, savedCredentials=saved,
+                args=["--update-key"], expectedSavedKeys=saved["keys"], **options)
+            self.assertNotEqual(reply["exit"], 0)
+            self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_update_key_requires_terminal(self):
+        reply = self.run_launcher({}, args=["--update-key","--model","coder"],
+            environment={"ERAGON_API_KEY":"fixture-secret"}, noCatalogue=1, noninteractive=True)
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertIn("Updating a key needs an interactive terminal", reply["output"])
+
     def test_failed_discovery_does_not_save_credentials(self):
         reply = self.run_launcher({}, curlFail=1, args=["--remember-key"])
         self.assertNotEqual(reply["exit"], 0)

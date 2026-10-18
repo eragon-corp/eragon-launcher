@@ -62,7 +62,15 @@ Run `bash eragon.sh --help` for usage.
 
 After entering a new key and selecting a usable model, the launcher asks `Remember API key locally (owner-only plaintext file)? [y/N]`. Enter `y` to remember it, or Enter to keep it in memory for this run. `--remember-key` opts in without that question, including for an environment-provided key. Failed discovery or capacity validation does not save a new key.
 
-Credentials are stored as **plaintext** in `${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json`, inside a directory with mode `700`, with file mode `600`. This is a local convenience file, not encrypted storage or an OS keychain. Credentials are indexed by normalized Gateway URL (trailing `/v1` shares the same key); switching hosts or base paths never silently reuses another Gateway's key. An explicit `ERAGON_API_KEY` overrides a saved key; use `--remember-key` to replace it. Without `--endpoint`, enter a new URL or press Enter to reuse the last remembered Gateway. Noninteractive launches still require an explicit endpoint.
+Credentials are stored as **plaintext** in `${XDG_CONFIG_HOME:-$HOME/.config}/eragon-router/credentials.json`, inside a directory with mode `700`, with file mode `600`. This is a local convenience file, not encrypted storage or an OS keychain. Credentials are indexed by normalized Gateway URL (trailing `/v1` shares the same key); switching hosts or base paths never silently reuses another Gateway's key. An explicit `ERAGON_API_KEY` overrides a saved key; use `--remember-key` to save that replacement. Without `--endpoint`, enter a new URL or press Enter to reuse the last remembered Gateway. Noninteractive launches still require an explicit endpoint.
+
+To replace the key for one Gateway, run:
+
+```bash
+bash ~/Downloads/eragon.sh --update-key
+```
+
+Enter the Gateway URL (or Enter for the last remembered Gateway), choose a client, and paste the new key at the hidden prompt. This option ignores saved and environment-provided keys, saves the replacement after successful selection/capacity validation, and starts the client. It keeps other Gateways' keys. Cancelling or failing discovery keeps the old key; no extra inference request is used to validate credentials. You can pass `--endpoint URL` to target a specific Gateway.
 
 Remove **all** remembered Gateway credentials:
 

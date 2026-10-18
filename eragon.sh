@@ -9,13 +9,14 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--remember-key|--forget-key]
+Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--remember-key|--update-key|--forget-key]
 
   --client NAME   claude, codex, pi or opencode; skip the interactive client menu.
   --endpoint URL  Gateway base URL (non-Claude clients also accept a trailing /v1).
   --model ID      Use this model directly, without fetching a model list.
   --search TEXT   Start the model menu with a case-insensitive literal search.
   --remember-key  Save this Gateway and key locally (owner-only plaintext file).
+  --update-key    Prompt for a replacement key for this Gateway, save on launch.
   --forget-key    Delete all locally remembered Gateway credentials and exit.
   --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Pi: >=32768; others: >=4096).
   -h, --help      Show this help.
@@ -38,7 +39,7 @@ endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
 client=${ERAGON_CLIENT-}
-search_query=''; remember_key=0; forget_key=0; prompted_key=0
+search_query=''; remember_key=0; forget_key=0; prompted_key=0; update_key=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --endpoint|--model|--context-window|--client|--search)
@@ -52,6 +53,7 @@ while [[ $# -gt 0 ]]; do
       esac
       shift 2 ;;
     --remember-key) remember_key=1; shift ;;
+    --update-key) update_key=1; remember_key=1; shift ;;
     --forget-key) forget_key=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail 'Unknown option. Run bash eragon.sh --help.' ;;
@@ -95,6 +97,11 @@ if [[ -z "$endpoint" ]]; then
   fi
   [[ -n "$endpoint" ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
 fi
+if [[ "$update_key" == 1 ]]; then
+  [[ -t 0 && -t 1 ]] || fail 'Updating a key needs an interactive terminal.'
+  # Force hidden entry even if an environment or remembered key is available.
+  eragon_key=''
+fi
 if [[ -z "$client" ]]; then
   if [[ -t 0 && -t 1 ]]; then
     printf 'Choose a client:\n  1) Claude Code\n  2) Codex\n  3) Pi Agent\n  4) OpenCode\n'
@@ -132,7 +139,7 @@ while [[ "$endpoint" == */ ]]; do endpoint=${endpoint%/}; done
 if [[ "$client" != claude && "$endpoint" == */v1 ]]; then endpoint=${endpoint%/v1}; fi
 # /v1 is a protocol suffix, not a different credential scope.
 credential_endpoint=${endpoint%/v1}
-if [[ -z "$eragon_key" ]]; then
+if [[ -z "$eragon_key" && "$update_key" == 0 ]]; then
   eragon_key=$(printf '%s' "$saved_credentials" | jq -r --arg url "$credential_endpoint" '.keys[$url] // ""')
 fi
 unset saved_credentials
