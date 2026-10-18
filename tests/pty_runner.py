@@ -263,7 +263,7 @@ if os.environ.get('CHECK_MEMORY_CHILD') == '1':
         manifest_path.write_text(json.dumps(request['manifest']))
         environment['ERAGON_COMPATIBILITY_FILE'] = str(manifest_path)
         expected_files.append('compatibility.json')
-    arguments = ['/bin/bash'] + request.get('bashOptions', ['-x']) + ['eragon.sh'] + request.get('args', [])
+    arguments = request.get('command', ['/bin/bash'] + request.get('bashOptions', ['-x']) + ['eragon.sh']) + request.get('args', [])
     if request.get('noninteractive'):
         result = subprocess.run(arguments, cwd=directory, env=environment,
                                 input='', capture_output=True, text=True, timeout=8)

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Eragon Router for Claude Code, Codex, Pi and OpenCode. Optional local credential storage.
-# Requires Bash 3.2+, curl and jq. Run from your project: bash eragon.sh
+# Requires Bash 3.2+, curl and jq. Run from your project: eragon-router
 set +x
 set -euo pipefail
 
@@ -9,7 +9,7 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--memory] [--remember-key|--update-key|--forget-key]
+Usage: eragon-router [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS] [--search TEXT] [--memory] [--remember-key|--update-key|--forget-key]
 
   --client NAME   claude, codex, pi or opencode; skip the interactive client menu.
   --endpoint URL  Gateway base URL (non-Claude clients also accept a trailing /v1).
@@ -20,7 +20,10 @@ Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL]
   --update-key    Prompt for a replacement key for this Gateway, save on launch.
   --forget-key    Delete all locally remembered Gateway credentials and exit.
   --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Pi: >=32768; others: >=4096).
+  -v, --version   Show the installed router version.
   -h, --help      Show this help.
+
+Standalone alternative: bash /path/to/eragon.sh [options]
 
 Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDOW, ERAGON_CLIENT.
 Optional ERAGON_COMPATIBILITY_FILE: local verified-profile JSON (no keys/URLs).
@@ -57,8 +60,9 @@ while [[ $# -gt 0 ]]; do
     --remember-key) remember_key=1; shift ;;
     --update-key) update_key=1; remember_key=1; shift ;;
     --forget-key) forget_key=1; shift ;;
+    -v|--version) printf 'Eragon Router 0.1.0\n'; exit 0 ;;
     -h|--help) usage; exit 0 ;;
-    *) fail 'Unknown option. Run bash eragon.sh --help.' ;;
+    *) fail 'Unknown option. Run eragon-router --help (or bash eragon.sh --help).' ;;
   esac
 done
 # This is launcher-owned storage, separate from every client's configuration.

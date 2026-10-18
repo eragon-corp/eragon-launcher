@@ -17,22 +17,34 @@ You need:
 | Pi Agent | 0.73.1 |
 | OpenCode | 1.3.7 |
 
-1. Download the launcher from the public [Eragon Router repository](https://github.com/eragon-corp/eragon-router):
+1. Install the CLI with npm:
 
    ```bash
-   mkdir -p "$HOME/Downloads"
-   curl -fsSL https://raw.githubusercontent.com/eragon-corp/eragon-router/main/eragon.sh \
-     -o "$HOME/Downloads/eragon.sh"
+   npm install -g https://github.com/eragon-corp/eragon-router/archive/refs/heads/main.tar.gz
    ```
 
-   You can also [download eragon.sh directly](https://raw.githubusercontent.com/eragon-corp/eragon-router/main/eragon.sh) and save it to your Downloads folder.
+   This installs directly from the public GitHub repository. No npm registry release is required. Node.js and npm are needed for this installation method; the router itself runs in Bash.
 
-2. Open a terminal in the project you want to work on.
-3. Run:
+2. Open a terminal in your project folder and run:
 
    ```bash
-   bash ~/Downloads/eragon.sh
+   eragon-router
    ```
+
+Check the installed version with `eragon-router --version`. To update, run the same installation command again. To uninstall, run `npm uninstall -g eragon-router`; saved credentials and optional Memory registrations remain until you remove them separately.
+
+### Standalone script
+
+If you prefer to avoid npm, download and run the same launcher directly:
+
+```bash
+mkdir -p "$HOME/Downloads"
+curl -fsSL https://raw.githubusercontent.com/eragon-corp/eragon-router/main/eragon.sh \
+  -o "$HOME/Downloads/eragon.sh"
+bash ~/Downloads/eragon.sh
+```
+
+Both entry points accept the same options and use the same saved settings.
 
 The launcher guides you through these steps:
 
@@ -50,7 +62,7 @@ Your selected client then opens in your current project folder.
 Run the same command:
 
 ```bash
-bash ~/Downloads/eragon.sh
+eragon-router
 ```
 
 If you remembered credentials, press Enter at the Gateway prompt to reuse the saved address. After choosing a client, you can use the saved key or update it:
@@ -96,13 +108,13 @@ If `XDG_CONFIG_HOME` is set, the file is stored under that directory instead. Th
 You can update a saved key from the interactive menu, or go directly to the replacement flow:
 
 ```bash
-bash ~/Downloads/eragon.sh --update-key
+eragon-router --update-key
 ```
 
 To remove **all** remembered Gateway credentials:
 
 ```bash
-bash ~/Downloads/eragon.sh --forget-key
+eragon-router --forget-key
 ```
 
 Keys are not displayed or placed in command arguments. Do not paste a key into a terminal command, commit it to a repository, or include it in a support request.
@@ -121,7 +133,7 @@ Memory setup [1]:
 Or request automatic setup directly:
 
 ```bash
-bash ~/Downloads/eragon.sh --memory
+eragon-router --memory
 ```
 
 Memory setup requires **Node.js 22.19+ and npm**, an Eragon Gateway, and a personal key with the required Memory permissions. Pi also needs built-in MCP support; update Pi if the launcher reports it is missing. Installing the bridge does not grant additional access to your key.
@@ -143,7 +155,7 @@ What do you know about how I like to work? Cite any Eragon memories you rely on,
 Choose a client without the client menu:
 
 ```bash
-bash ~/Downloads/eragon.sh --client codex
+eragon-router --client codex
 ```
 
 The available client names are `claude`, `codex`, `pi`, and `opencode`.
@@ -151,13 +163,13 @@ The available client names are `claude`, `codex`, `pi`, and `opencode`.
 Start with a model search already applied:
 
 ```bash
-bash ~/Downloads/eragon.sh --search sonnet
+eragon-router --search sonnet
 ```
 
 If your administrator supplied an exact model ID, use it directly:
 
 ```bash
-bash ~/Downloads/eragon.sh --model example/coder
+eragon-router --model example/coder
 ```
 
 Replace `example/coder` with your actual model ID. This skips the model list and compatibility screening. If the model has a known context limit, add `--context-window TOKENS` using the value supplied by your administrator.
@@ -169,7 +181,7 @@ For scripts and secret-manager integrations, the launcher accepts `ERAGON_CLIENT
 See all options with:
 
 ```bash
-bash ~/Downloads/eragon.sh --help
+eragon-router --help
 ```
 
 ## Troubleshooting

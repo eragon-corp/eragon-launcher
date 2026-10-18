@@ -1,0 +1,29 @@
+{
+  "name": "eragon-router",
+  "version": "0.1.0",
+  "description": "Connect Claude Code, Codex, Pi Agent and OpenCode to your model Gateway.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/eragon-corp/eragon-router.git"
+  },
+  "homepage": "https://github.com/eragon-corp/eragon-router#readme",
+  "bugs": {
+    "url": "https://github.com/eragon-corp/eragon-router/issues"
+  },
+  "bin": {
+    "eragon-router": "eragon.sh"
+  },
+  "files": [
+    "eragon.sh",
+    "docs/technical-reference.md",
+    "compatibility.example.json"
+  ],
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -q"
+  }
+}

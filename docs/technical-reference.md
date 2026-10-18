@@ -120,3 +120,11 @@ python3 tests/check_memory_setup.py
 ```
 
 This runs the real installer in temporary directories with fixture client commands and a fixture key, verifies registrations and preserved configuration, then initializes the real MCP server and lists its tools. It does not invoke a model, read Memory, or save Memory.
+
+## CLI packaging
+
+The npm package exposes `eragon-router` directly from the executable `eragon.sh`. There is no JavaScript wrapper, runtime dependency, or npm lifecycle script. Bash retains the current project directory, environment, terminal, signal handling, and client exit status. The standalone download remains supported with the same options and credential storage.
+
+Install from the public GitHub archive as shown in the README. The package name in `package.json` does not imply an npm registry release. Its explicit file allowlist includes only the launcher, customer documentation, compatibility example, and license. Local credentials and tests are not bundled.
+
+Run `npm test` to check the launcher and packaging. When npm is available, the packaging tests create a tarball, install it into a temporary prefix, inspect its contents, and exercise the installed command with isolated fixture clients. They make no Gateway requests. Keep the `--version` value in `eragon.sh` aligned with `package.json`; the package test checks this.
