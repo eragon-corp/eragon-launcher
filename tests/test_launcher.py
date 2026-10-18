@@ -304,6 +304,69 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("claude update", reply["output"])
         self.assertNotIn("LAUNCHED", reply["output"])
 
+    def test_codex_explicit_model_and_capacity_without_discovery(self):
+        reply = self.run_launcher({}, args=["--client", "codex", "--model", "custom/coder", "--context-window", "64000"],
+                                  noCatalogue=1, noninteractive=True,
+                                  environment={"ERAGON_API_KEY": "fixture-secret", "OPENAI_API_KEY": "stale",
+                                               "ANTHROPIC_AUTH_TOKEN": "stale"})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('CODEX_LAUNCHED', reply["output"])
+        self.assertIn('"context": 64000', reply["output"])
+
+    def test_codex_responses_screening_and_context(self):
+        model = self.candidate("example/coder")
+        model.update(context_window=128000, supports_responses=True)
+        blocked = self.candidate("blocked") | {"supports_responses": False}
+        reply = self.run_launcher({"data": [model, blocked, self.candidate("unknown")]}, args=["--client", "codex"])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"context": 128000', reply["output"])
+        self.assertIn('example/coder [capabilities declared; not tested]', reply["output"])
+        self.assertNotIn('blocked [', reply["output"])
+        self.assertNotIn('unknown [', reply["output"])
+
+    def test_codex_conflicting_response_support_excludes_model(self):
+        model = self.candidate("custom") | {"supports_responses": True}
+        reply = self.run_launcher({"data": [model, {"id": "custom", "model_info": {"supports_responses": False}}]},
+                                  args=["--client", "codex"])
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertNotIn('CODEX_LAUNCHED', reply["output"])
+
+    def test_client_flag_overrides_environment(self):
+        reply = self.run_launcher({}, args=["--client", "codex", "--model", "custom"],
+                                  environment={"ERAGON_CLIENT": "invalid", "ERAGON_API_KEY": "fixture-secret"},
+                                  noCatalogue=1, noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('CODEX_LAUNCHED', reply["output"])
+
+    def test_codex_accepts_v1_endpoint_without_duplicating_version(self):
+        reply = self.run_launcher({"data": [{"id": "custom"}]},
+                                  args=["--client", "codex", "--endpoint", "https://gateway.example.com/gw/v1/"])
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('CODEX_LAUNCHED', reply["output"])
+        self.assertIn('Context capacity unknown', reply["output"])
+        self.assertIn('"context": 125000', reply["output"])
+
+    def test_codex_does_not_reuse_claude_certificates(self):
+        reply = self.run_launcher({"data": [{"id": "other/coder"}]}, manifest=self.certificate(),
+                                  environment={"ERAGON_CLIENT": "codex"})
+        self.assertEqual(reply["exit"], 0)
+        self.assertNotIn('verified for this endpoint/client/adapter', reply["output"])
+        self.assertIn('other/coder [unverified]', reply["output"])
+
+    def test_codex_invalid_client_and_old_version(self):
+        for environment in [{"ERAGON_CLIENT": "invalid"},
+                            {"ERAGON_CLIENT": "codex", "FIXTURE_CODEX_VERSION": "codex-cli 0.159.0"}]:
+            reply = self.run_launcher({}, environment=environment, noCatalogue=1)
+            self.assertNotEqual(reply["exit"], 0)
+            self.assertNotIn('CODEX_LAUNCHED', reply["output"])
+
+    def test_codex_hidden_key_interrupt_and_capacity_floor(self):
+        reply = self.run_launcher({}, args=["--client", "codex", "--model", "custom"], noCatalogue=1, interrupt=True)
+        self.assertEqual(reply["exit"], 130)
+        reply = self.run_launcher({"data": [{"id": "small", "max_input_tokens": 2048}]}, args=["--client", "codex"])
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertNotIn('CODEX_LAUNCHED', reply["output"])
+
     def test_cancel_restores_terminal(self):
         reply = self.run_launcher({"data": []}, interrupt=True)
         self.assertEqual(reply["exit"], 130)

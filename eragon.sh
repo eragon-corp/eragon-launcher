@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Eragon Router for Claude Code. No persistent configuration or credentials.
+# Eragon Router for Claude Code and Codex. No persistent configuration or credentials.
 # Requires Bash 3.2+, curl and jq. Run from your project: bash eragon.sh
 set +x
 set -euo pipefail
@@ -9,14 +9,15 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
+Usage: bash eragon.sh [--client claude|codex] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
 
-  --endpoint URL  Anthropic-compatible base URL (no /v1 suffix).
+  --client NAME   claude (default) or codex.
+  --endpoint URL  Gateway base URL (Codex also accepts a trailing /v1).
   --model ID      Use this model directly, without fetching a model list.
-  --context-window TOKENS  Actual gateway context/input limit (at least 125000).
+  --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Codex: >=4096).
   -h, --help      Show this help.
 
-Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDOW.
+Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDOW, ERAGON_CLIENT.
 Optional ERAGON_COMPATIBILITY_FILE: local verified-profile JSON (no keys/URLs).
 Flags override environment values. An endpoint must be provided explicitly.
 Without a key, prompt with hidden input. Without a model, filter the catalogue.
@@ -24,17 +25,19 @@ Keys are never saved. Pass a key through the environment or hidden prompt,
 not a command-line argument. Fully configured launches skip these prompts.
 HELP
 }
-unset endpoint selected eragon_key context_limit
+unset endpoint selected eragon_key context_limit client
 eragon_key=${ERAGON_API_KEY-}
-unset ERAGON_API_KEY
+unset ERAGON_API_KEY ERAGON_ROUTER_TOKEN
 endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
+client=${ERAGON_CLIENT-claude}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --endpoint|--model|--context-window)
+    --endpoint|--model|--context-window|--client)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "Missing value for $1."
       case "$1" in
+        --client) client=$2 ;;
         --endpoint) endpoint=$2 ;;
         --model) selected=$2 ;;
         --context-window) context_limit=$2 ;;
@@ -45,7 +48,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$endpoint" ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
-for dependency in claude jq; do
+case "$client" in
+  claude) client_command=claude; client_label='Claude Code'; minimum_context=125000 ;;
+  codex) client_command=codex; client_label=Codex; minimum_context=4096 ;;
+  *) fail 'Client must be claude or codex.' ;;
+esac
+for dependency in "$client_command" jq; do
   command -v "$dependency" >/dev/null 2>&1 || fail "Missing $dependency. Install it, then run this script again."
 done
 # Reject credentials, queries, fragments, control characters and ambiguous URLs.
@@ -54,6 +62,7 @@ printf '%s' "$endpoint" | jq -eRs '
   test("\\Ahttps://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%/:-]*)?\\z")
 ' >/dev/null || fail 'Endpoint must be an HTTPS base URL without credentials, query or fragment.'
 while [[ "$endpoint" == */ ]]; do endpoint=${endpoint%/}; done
+if [[ "$client" == codex && "$endpoint" == */v1 ]]; then endpoint=${endpoint%/v1}; fi
 if [[ -n "$selected" ]]; then
   printf '%s' "$selected" | jq -eRs '
     test("\\A[A-Za-z0-9][A-Za-z0-9._:/-]*\\z")
@@ -63,18 +72,22 @@ else
   [[ -t 0 && -t 1 ]] || fail 'Model selection needs an interactive terminal. Set --model or ERAGON_MODEL.'
 fi
 if [[ -n "$context_limit" ]]; then
-  printf '%s' "$context_limit" | jq -eRs '
-    test("\\A[1-9][0-9]{0,8}\\z") and (tonumber >= 125000)
-  ' >/dev/null || fail 'Context window must be an integer from 125000 to 999999999 tokens.'
+  printf '%s' "$context_limit" | jq -eRs --argjson minimum "$minimum_context" '
+    test("\\A[1-9][0-9]{0,8}\\z") and (tonumber >= $minimum)
+  ' >/dev/null || fail "Context window must be an integer from $minimum_context to 999999999 tokens."
 fi
-# Older clients may silently ignore the compaction-window override.
-client_version=$(claude --version) || fail 'Could not read Claude Code version.'
-client_version=${client_version%% *}
-printf '%s' "$client_version" | jq -eRs '
+# Baselines tested with the CLI overrides used below.
+client_version=$("$client_command" --version) || fail "Could not read $client_label version."
+if [[ "$client" == claude ]]; then
+  client_version=${client_version%% *}; minimum_version='[2,1,302]'
+else
+  client_version=${client_version##* }; minimum_version='[0,160,0]'
+fi
+printf '%s' "$client_version" | jq -eRs --argjson minimum "$minimum_version" '
   capture("\\A(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)\\z") |
-  [.major,.minor,.patch] | map(tonumber) | . >= [2,1,302]
-' >/dev/null || fail 'Claude Code 2.1.302 or later is required. Run claude update.'
-printf 'Eragon Router · Claude Code\nEndpoint: %s\n\n' "$endpoint"
+  [.major,.minor,.patch] | map(tonumber) | . >= $minimum
+' >/dev/null || fail "Update $client_label to the supported baseline (Claude Code 2.1.302 / Codex 0.160.0) or later. Run claude update or codex update."
+printf 'Eragon Router · %s\nEndpoint: %s\n\n' "$client_label" "$endpoint"
 if [[ -z "$eragon_key" ]]; then
   [[ -t 0 && -t 1 ]] || fail 'Set ERAGON_API_KEY or run in an interactive terminal to enter a key.'
   command -v stty >/dev/null 2>&1 || fail 'Missing stty.'
@@ -97,7 +110,7 @@ fi
 # Optional local test records. No network or live inference is used to certify.
 manifest='{"schema_version":1,"verified":[]}'
 endpoint_hash=''
-if [[ -n "${ERAGON_COMPATIBILITY_FILE-}" ]]; then
+if [[ "$client" == claude && -n "${ERAGON_COMPATIBILITY_FILE-}" ]]; then
   if ! manifest=$(jq -ecs '
     if length != 1 then error("one JSON document required") else .[0] end |
     if (keys - ["schema_version", "verified"] | length) == 0 and
@@ -144,7 +157,7 @@ fi
 # Normalize declared capabilities locally. False wins conflicting declarations;
 # missing or malformed fields remain unknown. Model names never certify support.
 if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
-  --argjson manifest "$manifest" --arg hash "$endpoint_hash" --arg version "$client_version" '
+  --arg client "$client" --argjson manifest "$manifest" --arg hash "$endpoint_hash" --arg version "$client_version" '
   def verdict:
     map(select(type == "boolean")) |
     if index(false) != null then false elif index(true) != null then true else null end;
@@ -159,6 +172,7 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
   def classify:
     (cap("tools"; "supports_function_calling")) as $tools |
     (cap("streaming"; "supports_streaming")) as $stream |
+    (cap("responses"; "supports_responses")) as $responses |
     ([textcap("input_modalities"), .capabilities.text_input,
       (if (.supported_modalities | type) == "array" and
           (.supported_modalities | all(.[]; type == "string")) then
@@ -169,7 +183,7 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
      context:([.context_length,.context_window,.max_input_tokens,
        .model_info.context_length,.model_info.context_window,.model_info.max_input_tokens] | positive_limit),
      max_output:([.max_output_tokens,.model_info.max_output_tokens] | positive_limit),
-     tools:$tools, streaming:$stream, input:$input, output:$output,
+     responses:$responses, tools:$tools, streaming:$stream, input:$input, output:$output,
      nonchat: any($modes[]; . == "embedding" or . == "image_generation" or
        . == "audio_generation" or . == "audio_transcription" or . == "audio_speech" or . == "speech" or
        . == "video_generation" or . == "rerank" or . == "moderation")};
@@ -186,6 +200,7 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
     classify] |
   group_by(.id) | map(
     . as $duplicates | .[0].id as $id |
+    ([$duplicates[].responses] | verdict) as $responses |
     ([$duplicates[].tools] | verdict) as $tools |
     ([$duplicates[].streaming] | verdict) as $stream |
     ([$duplicates[].input] | verdict) as $input |
@@ -195,10 +210,10 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
     {id:$id,
      context:([$duplicates[].context] | positive_limit),
      max_output:([$duplicates[].max_output] | positive_limit),
-     status:(if $nonchat or $tools == false or $stream == false or $input == false or $output == false
+     status:(if ($client == "codex" and $responses == false) or $nonchat or $tools == false or $stream == false or $input == false or $output == false
        then "unsupported"
        elif ($records | length) == 1 then "verified"
-       elif $tools == true and $stream == true and $input == true and $output == true
+       elif $tools == true and $stream == true and $input == true and $output == true and ($client != "codex" or $responses == true)
        then "candidate" else "unverified" end),
      profile:(if ($records | length) == 1 then $records[0].profile
        elif ($id | startswith("claude-")) then "native" else "basic" end)}) |
@@ -263,7 +278,15 @@ context_limit=$(printf '%s' "$limits" | jq -r --arg configured "$context_limit" 
   [.context, (if $configured == "" then null else ($configured | tonumber) end)] |
   map(select(. != null)) | if length > 0 then min else 0 end')
 output_limit=$(printf '%s' "$limits" | jq -r '[.max_output,8192] | map(select(. != null)) | min')
-if [[ "$context_limit" == 0 ]]; then
+if [[ "$client" == codex ]]; then
+  if [[ "$context_limit" == 0 ]]; then
+    context_limit=125000
+    printf 'Context capacity unknown: assuming 125000 tokens. Set --context-window to the actual gateway limit.\n'
+  fi
+  [[ "$context_limit" -ge "$minimum_context" ]] || fail 'Declared context is below 4096 tokens; choose a model with a larger window.'
+  compact_window=$((context_limit / 5 * 4))
+  printf 'Codex context: %s tokens; compaction threshold: %s.\n' "$context_limit" "$compact_window"
+elif [[ "$context_limit" == 0 ]]; then
   compact_window=100000
   printf 'Context capacity unknown: using a conservative 100000-token compaction window.\n'
   printf 'Set --context-window to the actual limit; limits below 125000 are unsupported.\n'
@@ -274,6 +297,25 @@ else
   printf 'Gateway capacity: %s tokens; compaction window: %s; output cap: %s.\n' "$context_limit" "$compact_window" "$output_limit"
 fi
 unset classification rows limits
+
+if [[ "$client" == codex ]]; then
+  # Inline TOML contains public settings and the environment variable NAME only.
+  # Replacing the whole provider table prevents inherited auth/header settings.
+  provider="{name=\"Eragon Router\",base_url=\"$endpoint/v1\",env_key=\"ERAGON_ROUTER_TOKEN\",wire_api=\"responses\",requires_openai_auth=false,supports_websockets=false}"
+  export ERAGON_ROUTER_TOKEN="$eragon_key"
+  unset eragon_key ERAGON_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY
+  printf '\nStarting Codex with %s… Gateway must support Responses streaming and tools.\n' "$selected"
+  # Stay in this process tree so an existing shared daemon cannot lose the key.
+  # Local compaction uses Responses; no /responses/compact endpoint is required.
+  exec codex --no-daemon --model "$selected" \
+    -c 'model_provider="eragon_router"' \
+    -c "model_providers.eragon_router=$provider" \
+    -c "model_context_window=$context_limit" \
+    -c "model_auto_compact_token_limit=$compact_window" \
+    -c 'model_auto_compact_token_limit_scope="total"' \
+    -c 'model_reasoning_summary="none"' \
+    -c 'web_search="disabled"'
+fi
 
 export ANTHROPIC_BASE_URL="$endpoint"
 export ANTHROPIC_AUTH_TOKEN="$eragon_key"

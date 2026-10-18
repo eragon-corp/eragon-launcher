@@ -52,12 +52,38 @@ print('CAPACITY ' + json.dumps(capacity))
 assert all('fixture-secret' not in arg for arg in sys.argv)
 print('LAUNCHED ' + json.dumps({'model': sys.argv[2], 'url': settings['env']['ANTHROPIC_BASE_URL']}))
 """)
-    for path in [curl, claude]: path.chmod(0o700)
+    codex = root / "codex"
+    codex.write_text("""#!/usr/bin/env python3
+import os, sys, json
+if sys.argv[1:] == ['--version']:
+    print(os.environ.get('FIXTURE_CODEX_VERSION', 'codex-cli 0.160.0')); sys.exit(0)
+assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
+for key in ['ERAGON_API_KEY', 'eragon_key', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']:
+    assert key not in os.environ, key
+assert all('fixture-secret' not in arg for arg in sys.argv)
+assert sys.argv[1] == '--no-daemon' and sys.argv[2] == '--model'
+assert all(sys.argv[i] == '-c' for i in range(4,len(sys.argv),2))
+values = dict(arg.split('=', 1) for arg in sys.argv[5::2])
+assert values['model_provider'] == '\"eragon_router\"'
+provider = values['model_providers.eragon_router']
+assert 'base_url=\"' + os.environ['EXPECTED_ENDPOINT'] + '/v1\"' in provider
+assert 'env_key=\"ERAGON_ROUTER_TOKEN\"' in provider
+assert 'wire_api=\"responses\"' in provider
+assert 'requires_openai_auth=false' in provider
+assert 'supports_websockets=false' in provider
+assert 'fixture-secret' not in provider
+assert values['web_search'] == '\"disabled\"'
+assert values['model_auto_compact_token_limit_scope'] == '\"total\"'
+context = int(values['model_context_window'])
+assert int(values['model_auto_compact_token_limit']) == context // 5 * 4
+print('CODEX_LAUNCHED ' + json.dumps({'model': sys.argv[3], 'context': context, 'config': values}))
+""")
+    for path in [curl, claude, codex]: path.chmod(0o700)
     environment = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'],
         MODEL_RESPONSE=request['models'], CURL_FAIL=str(request.get('curlFail', 0)),
         ANTHROPIC_API_KEY='stale', CLAUDE_CODE_DISABLE_THINKING='1')
     # Do not accidentally use credentials/config from the developer's shell.
-    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION']:
+    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN']:
         environment.pop(name, None)
     if request.get('provideEndpoint', True):
         environment['ERAGON_ENDPOINT'] = 'https://gateway.example.com/gw'
@@ -65,7 +91,7 @@ print('LAUNCHED ' + json.dumps({'model': sys.argv[2], 'url': settings['env']['AN
     environment['EXPECTED_ENDPOINT'] = request.get('expectedEndpoint', 'https://gateway.example.com/gw')
     environment['EXPECT_NO_CATALOGUE'] = str(request.get('noCatalogue', 0))
     environment['EXPECTED_PROFILE'] = request.get('expectedProfile', '')
-    expected_files = ['claude', 'curl', 'eragon.sh']
+    expected_files = ['claude', 'codex', 'curl', 'eragon.sh']
     if 'manifest' in request:
         manifest_path = root / 'compatibility.json'
         manifest_path.write_text(json.dumps(request['manifest']))
