@@ -1,0 +1,18 @@
+name: Test Eragon Router
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check dependencies
+        run: command -v bash && command -v jq && command -v python3
+      - name: Check syntax
+        run: bash -n eragon.sh
+      - name: Exercise interactive launcher without network access
+        run: python3 -m unittest discover -s tests -v
