@@ -331,6 +331,28 @@ class LauncherTests(unittest.TestCase):
         self.assertIn('CODEX_LAUNCHED', reply["output"])
         self.assertIn('"context": 64000', reply["output"])
 
+    def test_memory_child_receives_selected_key_for_all_non_claude_clients(self):
+        endpoint = "https://gateway.example.com/gw"
+        stale = {"ANTHROPIC_BASE_URL":"https://stale.example/gw", "ANTHROPIC_AUTH_TOKEN":"stale-key",
+                 "OPENAI_API_KEY":"stale-key", "ERAGON_GATEWAY_URL":"https://stale.example/gw"}
+        for client in ["codex", "pi", "opencode"]:
+            sources = [
+                {"environment":dict(stale, ERAGON_API_KEY="fixture-secret"), "noninteractive":True},
+                {"environment":stale},
+                {"environment":stale, "savedCredentials":{"last_endpoint":endpoint,"keys":{endpoint:"fixture-secret"}}, "noninteractive":True},
+                {"environment":dict(stale, ERAGON_API_KEY="stale-key"),
+                 "savedCredentials":{"last_endpoint":endpoint,"keys":{endpoint:"old-key"}},
+                 "keyActions":["2"], "args":["--client",client,"--model","coder","--update-key"]},
+            ]
+            for source in sources:
+                with self.subTest(client=client, source=list(source)):
+                    options = dict(args=["--client",client,"--model","coder"], noCatalogue=1,
+                                   checkMemoryChild=True)
+                    options.update(source)
+                    reply = self.run_launcher({}, **options)
+                    self.assertEqual(reply["exit"], 0)
+                    self.assertIn("MEMORY_CHILD_AUTH_MATCHED", reply["output"])
+
     def test_codex_responses_screening_and_context(self):
         model = self.candidate("example/coder")
         model.update(context_window=128000, supports_responses=True)

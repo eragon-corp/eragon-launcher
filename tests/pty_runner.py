@@ -58,7 +58,9 @@ import os, sys, json
 if sys.argv[1:] == ['--version']:
     print(os.environ.get('FIXTURE_CODEX_VERSION', 'codex-cli 0.160.0')); sys.exit(0)
 assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
-for key in ['ERAGON_API_KEY', 'eragon_key', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']:
+assert os.environ['ERAGON_API_KEY'] == os.environ['ERAGON_ROUTER_TOKEN']
+assert os.environ['ERAGON_GATEWAY_URL'] == os.environ['EXPECTED_ENDPOINT']
+for key in ['eragon_key', 'ANTHROPIC_BASE_URL', 'ANTHROPIC_AUTH_TOKEN', 'ANTHROPIC_API_KEY', 'OPENAI_API_KEY']:
     assert key not in os.environ, key
 assert all('fixture-secret' not in arg for arg in sys.argv)
 assert sys.argv[1] == '--no-daemon' and sys.argv[2] == '--model'
@@ -84,7 +86,9 @@ import os, sys, json, pathlib
 if sys.argv[1:] == ['--version']:
     print(os.environ.get('FIXTURE_PI_VERSION', '0.73.1'), file=sys.stderr); sys.exit(0)
 assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
-for name in ['ERAGON_API_KEY','eragon_key','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY']:
+assert os.environ['ERAGON_API_KEY'] == os.environ['ERAGON_ROUTER_TOKEN']
+assert os.environ['ERAGON_GATEWAY_URL'] == os.environ['EXPECTED_ENDPOINT']
+for name in ['eragon_key','ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY']:
     assert name not in os.environ, name
 assert all('fixture-secret' not in arg for arg in sys.argv)
 assert sys.argv[1] == '--extension' and sys.argv[3:5] == ['--provider','eragon_router']
@@ -107,7 +111,9 @@ import os, sys, json
 if sys.argv[1:] == ['--version']:
     print(os.environ.get('FIXTURE_OPENCODE_VERSION', '1.3.7')); sys.exit(0)
 assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
-for name in ['ERAGON_API_KEY','eragon_key','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY']:
+assert os.environ['ERAGON_API_KEY'] == os.environ['ERAGON_ROUTER_TOKEN']
+assert os.environ['ERAGON_GATEWAY_URL'] == os.environ['EXPECTED_ENDPOINT']
+for name in ['eragon_key','ANTHROPIC_BASE_URL','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY']:
     assert name not in os.environ, name
 assert all('fixture-secret' not in arg for arg in sys.argv)
 config = json.loads(os.environ['OPENCODE_CONFIG_CONTENT'])
@@ -122,17 +128,33 @@ assert config['compaction']['auto'] is True
 assert config['compaction']['reserved'] == model['limit']['context'] - model['limit']['context'] // 5 * 4
 print('OPENCODE_LAUNCHED ' + json.dumps(config))
 """)
+    memory_bridge = root / 'memory-bridge.py'
+    memory_bridge.write_text("import os, sys\nassert os.environ['ERAGON_API_KEY'] == 'fixture-secret'\nassert sys.argv[1] == '--url'\nassert sys.argv[2] == " + repr(request.get('expectedEndpoint', 'https://gateway.example.com/gw')) + "\nassert 'ANTHROPIC_BASE_URL' not in os.environ\nprint('MEMORY_CHILD_AUTH_MATCHED')\n")
+    for client_path in [codex, pi, opencode]:
+        source = client_path.read_text()
+        # Exercise a real subprocess; Codex forwards only the installed bridge's
+        # env_vars allowlist, while the Gateway URL is an explicit --url argument.
+        check = """
+if os.environ.get('CHECK_MEMORY_CHILD') == '1':
+    import subprocess, pathlib
+    child_env = ({'ERAGON_API_KEY':os.environ['ERAGON_API_KEY']} if pathlib.Path(__file__).name == 'codex' else dict(os.environ))
+    subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name('memory-bridge.py')),
+                    '--url', os.environ['ERAGON_GATEWAY_URL']], env=child_env, check=True)
+"""
+        source = source.replace("assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'", "assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'\n" + check, 1)
+        client_path.write_text(source)
     for path in [curl, claude, codex, pi, opencode]: path.chmod(0o700)
     environment = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'],
         MODEL_RESPONSE=request['models'], CURL_FAIL=str(request.get('curlFail', 0)),
         ANTHROPIC_API_KEY='stale', CLAUDE_CODE_DISABLE_THINKING='1')
     # Do not accidentally use credentials/config from the developer's shell.
-    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN', 'ERAGON_ROUTER_PI_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'FIXTURE_PI_VERSION', 'FIXTURE_OPENCODE_VERSION', 'FIXTURE_PI_EXIT']:
+    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN', 'ERAGON_GATEWAY_URL', 'CHECK_MEMORY_CHILD', 'ERAGON_ROUTER_PI_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'FIXTURE_PI_VERSION', 'FIXTURE_OPENCODE_VERSION', 'FIXTURE_PI_EXIT']:
         environment.pop(name, None)
     if request.get('provideEndpoint', True):
         environment['ERAGON_ENDPOINT'] = 'https://gateway.example.com/gw'
     environment.update(request.get('environment', {}))
     environment['EXPECTED_ENDPOINT'] = request.get('expectedEndpoint', 'https://gateway.example.com/gw')
+    environment['CHECK_MEMORY_CHILD'] = '1' if request.get('checkMemoryChild') else '0'
     environment['EXPECT_NO_CATALOGUE'] = str(request.get('noCatalogue', 0))
     environment['EXPECTED_PROFILE'] = request.get('expectedProfile', '')
     environment['TMPDIR'] = directory
@@ -166,7 +188,7 @@ print('OPENCODE_LAUNCHED ' + json.dumps(config))
             result['reloaded'] = True
         return result
 
-    expected_files = ['claude', 'codex', 'curl', 'eragon.sh', 'pi', 'opencode']
+    expected_files = ['claude', 'codex', 'curl', 'eragon.sh', 'pi', 'opencode', 'memory-bridge.py']
     if request.get('expectStorage') or 'savedCredentials' in request or request.get('symlinkCredentials'):
         expected_files.append('config')
     if 'manifest' in request:

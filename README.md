@@ -106,6 +106,14 @@ bash ~/Downloads/eragon.sh --forget-key
 
 Keys are not displayed or placed in command arguments. Do not paste a key into a terminal command, commit it to a repository, or include it in a support request.
 
+## Using an existing Eragon Memory connection
+
+If you have already registered [Eragon Context MCP](https://github.com/eragon-corp/eragon-context-mcp) with your client, the router passes the selected key to that connection. Codex, Pi, and OpenCode receive `ERAGON_API_KEY` and `ERAGON_GATEWAY_URL`; Claude Code uses its `ANTHROPIC_AUTH_TOKEN` and `ANTHROPIC_BASE_URL`. Updating a saved key also updates the key passed to Memory on the next launch.
+
+The bridge must be registered for the same Gateway. For Codex, its MCP entry must forward `ERAGON_API_KEY` through `env_vars`, as the bridge installer configures. An explicit `--url` in an existing bridge entry takes precedence over the environment; update that registration when switching Gateways. Your key must have the required Eragon Memory permissions.
+
+This credential support does not install or register the bridge, enable Memory on other Gateways, or change your Memory permissions.
+
 ## Optional shortcuts
 
 Choose a client without the client menu:

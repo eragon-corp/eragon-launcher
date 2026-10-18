@@ -34,7 +34,7 @@ HELP
 }
 unset endpoint selected eragon_key context_limit client saved_credentials credential_json
 eragon_key=${ERAGON_API_KEY-}
-unset ERAGON_API_KEY ERAGON_ROUTER_TOKEN
+unset ERAGON_API_KEY ERAGON_ROUTER_TOKEN ERAGON_GATEWAY_URL
 endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
@@ -455,9 +455,15 @@ if [[ "$remember_key" == 1 ]]; then
   printf 'Gateway and key remembered locally. Use --forget-key to remove all saved credentials.\n'
 fi
 
+# The model provider and an already configured Memory bridge must share the
+# selected credential. Export only after discovery and key updates are complete.
+if [[ "$client" != claude ]]; then
+  export ERAGON_ROUTER_TOKEN="$eragon_key" ERAGON_API_KEY="$eragon_key"
+  export ERAGON_GATEWAY_URL="$endpoint"
+  unset eragon_key ANTHROPIC_BASE_URL ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY
+fi
+
 if [[ "$client" == pi || "$client" == opencode ]]; then
-  export ERAGON_ROUTER_TOKEN="$eragon_key"
-  unset eragon_key ERAGON_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY
   printf '\nStarting %s with %s… Gateway must support Chat Completions streaming and tools.\n' "$client_label" "$selected"
   if [[ "$client" == opencode ]]; then
     # The JSON carries an environment reference, never the credential value.
@@ -509,8 +515,6 @@ if [[ "$client" == codex ]]; then
   # Inline TOML contains public settings and the environment variable NAME only.
   # Replacing the whole provider table prevents inherited auth/header settings.
   provider="{name=\"Eragon Router\",base_url=\"$endpoint/v1\",env_key=\"ERAGON_ROUTER_TOKEN\",wire_api=\"responses\",requires_openai_auth=false,supports_websockets=false}"
-  export ERAGON_ROUTER_TOKEN="$eragon_key"
-  unset eragon_key ERAGON_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY
   printf '\nStarting Codex with %s… Gateway must support Responses streaming and tools.\n' "$selected"
   # Stay in this process tree so an existing shared daemon cannot lose the key.
   # Local compaction uses Responses; no /responses/compact endpoint is required.
