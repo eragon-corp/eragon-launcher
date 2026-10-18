@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Eragon Router for Claude Code and Codex. No persistent configuration or credentials.
+# Eragon Router for Claude Code, Codex, Pi and OpenCode. No persistent configuration or credentials.
 # Requires Bash 3.2+, curl and jq. Run from your project: bash eragon.sh
 set +x
 set -euo pipefail
@@ -9,12 +9,12 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--client claude|codex] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
+Usage: bash eragon.sh [--client claude|codex|pi|opencode] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
 
-  --client NAME   claude or codex; skip the interactive client menu.
-  --endpoint URL  Gateway base URL (Codex also accepts a trailing /v1).
+  --client NAME   claude, codex, pi or opencode; skip the interactive client menu.
+  --endpoint URL  Gateway base URL (non-Claude clients also accept a trailing /v1).
   --model ID      Use this model directly, without fetching a model list.
-  --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Codex: >=4096).
+  --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Pi: >=32768; others: >=4096).
   -h, --help      Show this help.
 
 Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDOW, ERAGON_CLIENT.
@@ -50,13 +50,15 @@ done
 [[ -n "$endpoint" ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
 if [[ -z "$client" ]]; then
   if [[ -t 0 && -t 1 ]]; then
-    printf 'Choose a client:\n  1) Claude Code\n  2) Codex\n'
+    printf 'Choose a client:\n  1) Claude Code\n  2) Codex\n  3) Pi Agent\n  4) OpenCode\n'
     while true; do
       read -r -p 'Client number [1]: ' client_choice || fail 'Client selection cancelled.'
       case "${client_choice:-1}" in
         1) client=claude; break ;;
         2) client=codex; break ;;
-        *) printf 'Enter 1 or 2.\n' ;;
+        3) client=pi; break ;;
+        4) client=opencode; break ;;
+        *) printf 'Enter 1, 2, 3 or 4.\n' ;;
       esac
     done
   else
@@ -67,7 +69,9 @@ fi
 case "$client" in
   claude) client_command=claude; client_label='Claude Code'; minimum_context=125000 ;;
   codex) client_command=codex; client_label=Codex; minimum_context=4096 ;;
-  *) fail 'Client must be claude or codex.' ;;
+  pi) client_command=pi; client_label='Pi Agent'; minimum_context=32768 ;;
+  opencode) client_command=opencode; client_label=OpenCode; minimum_context=4096 ;;
+  *) fail 'Client must be claude, codex, pi or opencode.' ;;
 esac
 for dependency in "$client_command" jq; do
   command -v "$dependency" >/dev/null 2>&1 || fail "Missing $dependency. Install it, then run this script again."
@@ -78,7 +82,7 @@ printf '%s' "$endpoint" | jq -eRs '
   test("\\Ahttps://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._~%/:-]*)?\\z")
 ' >/dev/null || fail 'Endpoint must be an HTTPS base URL without credentials, query or fragment.'
 while [[ "$endpoint" == */ ]]; do endpoint=${endpoint%/}; done
-if [[ "$client" == codex && "$endpoint" == */v1 ]]; then endpoint=${endpoint%/v1}; fi
+if [[ "$client" != claude && "$endpoint" == */v1 ]]; then endpoint=${endpoint%/v1}; fi
 if [[ -n "$selected" ]]; then
   printf '%s' "$selected" | jq -eRs '
     test("\\A[A-Za-z0-9][A-Za-z0-9._:/-]*\\z")
@@ -93,16 +97,17 @@ if [[ -n "$context_limit" ]]; then
   ' >/dev/null || fail "Context window must be an integer from $minimum_context to 999999999 tokens."
 fi
 # Baselines tested with the CLI overrides used below.
-client_version=$("$client_command" --version) || fail "Could not read $client_label version."
-if [[ "$client" == claude ]]; then
-  client_version=${client_version%% *}; minimum_version='[2,1,302]'
-else
-  client_version=${client_version##* }; minimum_version='[0,160,0]'
-fi
+client_version=$("$client_command" --version 2>&1) || fail "Could not read $client_label version."
+case "$client" in
+  claude) client_version=${client_version%% *}; minimum_version='[2,1,302]' ;;
+  codex) client_version=${client_version##* }; minimum_version='[0,160,0]' ;;
+  pi) minimum_version='[0,73,1]' ;;
+  opencode) minimum_version='[1,3,7]' ;;
+esac
 printf '%s' "$client_version" | jq -eRs --argjson minimum "$minimum_version" '
   capture("\\A(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)\\z") |
   [.major,.minor,.patch] | map(tonumber) | . >= $minimum
-' >/dev/null || fail "Update $client_label to the supported baseline (Claude Code 2.1.302 / Codex 0.160.0) or later. Run claude update or codex update."
+' >/dev/null || fail "Update $client_label to its supported baseline or later: Claude Code 2.1.302 (claude update), Codex 0.160.0, Pi 0.73.1, OpenCode 1.3.7."
 printf 'Eragon Router · %s\nEndpoint: %s\n\n' "$client_label" "$endpoint"
 if [[ -z "$eragon_key" ]]; then
   [[ -t 0 && -t 1 ]] || fail 'Set ERAGON_API_KEY or run in an interactive terminal to enter a key.'
@@ -189,6 +194,7 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
     (cap("tools"; "supports_function_calling")) as $tools |
     (cap("streaming"; "supports_streaming")) as $stream |
     (cap("responses"; "supports_responses")) as $responses |
+    (cap("chat_completions"; "supports_chat_completions")) as $chat |
     ([textcap("input_modalities"), .capabilities.text_input,
       (if (.supported_modalities | type) == "array" and
           (.supported_modalities | all(.[]; type == "string")) then
@@ -199,7 +205,7 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
      context:([.context_length,.context_window,.max_input_tokens,
        .model_info.context_length,.model_info.context_window,.model_info.max_input_tokens] | positive_limit),
      max_output:([.max_output_tokens,.model_info.max_output_tokens] | positive_limit),
-     responses:$responses, tools:$tools, streaming:$stream, input:$input, output:$output,
+     chat:$chat, responses:$responses, tools:$tools, streaming:$stream, input:$input, output:$output,
      nonchat: any($modes[]; . == "embedding" or . == "image_generation" or
        . == "audio_generation" or . == "audio_transcription" or . == "audio_speech" or . == "speech" or
        . == "video_generation" or . == "rerank" or . == "moderation")};
@@ -217,6 +223,7 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
   group_by(.id) | map(
     . as $duplicates | .[0].id as $id |
     ([$duplicates[].responses] | verdict) as $responses |
+    ([$duplicates[].chat] | verdict) as $chat |
     ([$duplicates[].tools] | verdict) as $tools |
     ([$duplicates[].streaming] | verdict) as $stream |
     ([$duplicates[].input] | verdict) as $input |
@@ -226,10 +233,12 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
     {id:$id,
      context:([$duplicates[].context] | positive_limit),
      max_output:([$duplicates[].max_output] | positive_limit),
-     status:(if ($client == "codex" and $responses == false) or $nonchat or $tools == false or $stream == false or $input == false or $output == false
+     status:(if ($client == "codex" and $responses == false) or
+       (($client == "pi" or $client == "opencode") and $chat == false) or $nonchat or $tools == false or $stream == false or $input == false or $output == false
        then "unsupported"
        elif ($records | length) == 1 then "verified"
-       elif $tools == true and $stream == true and $input == true and $output == true and ($client != "codex" or $responses == true)
+       elif $tools == true and $stream == true and $input == true and $output == true and ($client != "codex" or $responses == true) and
+         (($client != "pi" and $client != "opencode") or $chat == true)
        then "candidate" else "unverified" end),
      profile:(if ($records | length) == 1 then $records[0].profile
        elif ($id | startswith("claude-")) then "native" else "basic" end)}) |
@@ -294,14 +303,21 @@ context_limit=$(printf '%s' "$limits" | jq -r --arg configured "$context_limit" 
   [.context, (if $configured == "" then null else ($configured | tonumber) end)] |
   map(select(. != null)) | if length > 0 then min else 0 end')
 output_limit=$(printf '%s' "$limits" | jq -r '[.max_output,8192] | map(select(. != null)) | min')
-if [[ "$client" == codex ]]; then
+if [[ "$client" != claude ]]; then
   if [[ "$context_limit" == 0 ]]; then
     context_limit=125000
     printf 'Context capacity unknown: assuming 125000 tokens. Set --context-window to the actual gateway limit.\n'
   fi
-  [[ "$context_limit" -ge "$minimum_context" ]] || fail 'Declared context is below 4096 tokens; choose a model with a larger window.'
+  [[ "$context_limit" -ge "$minimum_context" ]] || fail "Declared context is below $minimum_context tokens; choose a model with a larger window."
   compact_window=$((context_limit / 5 * 4))
-  printf 'Codex context: %s tokens; compaction threshold: %s.\n' "$context_limit" "$compact_window"
+  if [[ "$client" == pi ]]; then
+    printf 'Pi context: %s tokens; using native compaction settings.\n' "$context_limit"
+  else
+    printf '%s context: %s tokens; compaction budget: %s.\n' "$client_label" "$context_limit" "$compact_window"
+  fi
+  if [[ "$client" == pi || "$client" == opencode ]]; then
+    [[ "$output_limit" -le $((context_limit / 4)) ]] || output_limit=$((context_limit / 4))
+  fi
 elif [[ "$context_limit" == 0 ]]; then
   compact_window=100000
   printf 'Context capacity unknown: using a conservative 100000-token compaction window.\n'
@@ -313,6 +329,56 @@ else
   printf 'Gateway capacity: %s tokens; compaction window: %s; output cap: %s.\n' "$context_limit" "$compact_window" "$output_limit"
 fi
 unset classification rows limits
+
+if [[ "$client" == pi || "$client" == opencode ]]; then
+  export ERAGON_ROUTER_TOKEN="$eragon_key"
+  unset eragon_key ERAGON_API_KEY ANTHROPIC_AUTH_TOKEN ANTHROPIC_API_KEY OPENAI_API_KEY
+  printf '\nStarting %s with %s… Gateway must support Chat Completions streaming and tools.\n' "$client_label" "$selected"
+  if [[ "$client" == opencode ]]; then
+    # The JSON carries an environment reference, never the credential value.
+    OPENCODE_CONFIG_CONTENT=$(jq -cn --arg url "$endpoint/v1" --arg model "$selected" \
+      --argjson context "$context_limit" --argjson output "$output_limit" \
+      --argjson reserve "$((context_limit - compact_window))" '
+      {model:("eragon_router/" + $model), small_model:("eragon_router/" + $model),
+       compaction:{auto:true,reserved:$reserve},
+       provider:{eragon_router:{npm:"@ai-sdk/openai-compatible",name:"Eragon Router",
+         options:{baseURL:$url,apiKey:"{env:ERAGON_ROUTER_TOKEN}"},
+         models:{($model):{name:$model,limit:{context:$context,output:$output},
+           modalities:{input:["text"],output:["text"]}}}}}}')
+    export OPENCODE_CONFIG_CONTENT
+    exec opencode --model "eragon_router/$selected"
+  fi
+
+  # Pi needs a provider registration file. It contains only code and a key
+  # reference; the model configuration travels through a separate environment.
+  printf 'Pi pricing estimates are unavailable for this custom provider.\n'
+  command -v mktemp >/dev/null 2>&1 || fail 'Missing mktemp.'
+  extension_dir=$(mktemp -d "${TMPDIR:-/tmp}/eragon-router.XXXXXXXX") || fail 'Could not create Pi extension directory.'
+  cleanup_pi() { rm -rf -- "$extension_dir"; }
+  trap cleanup_pi EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  pi_key_reference='ERAGON_ROUTER_TOKEN'
+  # Pi 1.x uses explicit interpolation; the 0.x resolver uses bare env names.
+  if [[ "${client_version%%.*}" != 0 ]]; then pi_key_reference='$ERAGON_ROUTER_TOKEN'; fi
+  ERAGON_ROUTER_PI_CONFIG=$(jq -cn --arg url "$endpoint/v1" --arg model "$selected" \
+    --arg key "$pi_key_reference" --argjson context "$context_limit" --argjson output "$output_limit" '
+    {name:"Eragon Router",baseUrl:$url,apiKey:$key,api:"openai-completions",
+     models:[{id:$model,name:$model,reasoning:false,input:["text"],
+       cost:{input:0,output:0,cacheRead:0,cacheWrite:0},contextWindow:$context,maxTokens:$output}]}')
+  export ERAGON_ROUTER_PI_CONFIG
+  cat > "$extension_dir/provider.mjs" <<'PI_EXTENSION'
+export default function (pi) {
+  pi.registerProvider("eragon_router", JSON.parse(process.env.ERAGON_ROUTER_PI_CONFIG));
+}
+PI_EXTENSION
+  # Keep the parent alive for cleanup; preserve the client's exit status.
+  if pi --extension "$extension_dir/provider.mjs" --provider eragon_router --model "$selected" --thinking off; then
+    exit 0
+  else
+    exit "$?"
+  fi
+fi
 
 if [[ "$client" == codex ]]; then
   # Inline TOML contains public settings and the environment variable NAME only.

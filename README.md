@@ -1,11 +1,13 @@
 # Eragon Router
 
-Start Claude Code or Codex through a configurable HTTPS model gateway. No service endpoint is built in.
-Requires macOS or Linux, Bash 3.2+, curl, jq, an API key for the selected endpoint, and the chosen CLI: Claude Code 2.1.302+ or Codex 0.160.0+. Only the selected CLI is required.
+Start Claude Code, Codex, Pi Agent or OpenCode through a configurable HTTPS model gateway. No service endpoint is built in.
+Requires macOS or Linux, Bash 3.2+, curl, jq, an API key for the selected endpoint, and the chosen CLI: Claude Code 2.1.302+, Codex 0.160.0+, Pi 0.73.1+ or OpenCode 1.3.7+. Only the selected CLI is required.
 
 Download [eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh), then run it from your project folder:
 
-Run this command, then choose Claude Code or Codex in the terminal (Enter selects Claude Code):
+Run this command, then choose a client in the terminal (Enter selects Claude Code):
+
+**Replace `https://gateway.example.com/gw` below with your real Gateway URL. It is a placeholder, not a working service.**
 
 ```bash
 bash ~/Downloads/eragon.sh --endpoint https://gateway.example.com/gw
@@ -25,13 +27,13 @@ All three connection values are configurable without editing the script or savin
 
 | Value | Command-line option | Environment | Default |
 | --- | --- | --- | --- |
-| Client | `--client claude\|codex` | `ERAGON_CLIENT` | Interactive menu; `claude` without a terminal |
+| Client | `--client claude\|codex\|pi\|opencode` | `ERAGON_CLIENT` | Interactive menu; `claude` without a terminal |
 | Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Required; no built-in endpoint |
 | API key | Hidden prompt | `ERAGON_API_KEY` | Ask with hidden input |
 | Model | `--model ID` | `ERAGON_MODEL` | Fetch, screen and select a model |
 | Context/input capacity | `--context-window TOKENS` | `ERAGON_CONTEXT_WINDOW` | Catalogue metadata, otherwise conservative fallback |
 
-Options override environment values. The endpoint must be an HTTPS base URL without credentials, a query, or a fragment. Trailing slashes are removed. Use the gateway base URL without `/v1`. Codex also accepts a trailing `/v1`; it is normalized before discovery and provider configuration.
+Options override environment values. The endpoint must be an HTTPS base URL without credentials, a query, or a fragment. Trailing slashes are removed. Use the gateway base URL without `/v1`. Codex, Pi and OpenCode also accept a trailing `/v1`; it is normalized before discovery and provider configuration.
 
 For example, configure an endpoint and model, then enter the key at the hidden prompt:
 
@@ -72,6 +74,17 @@ bash ~/Downloads/eragon.sh --client codex \
 ```
 
 The Codex adapter does not apply Claude-specific output limits or a fabricated Codex output-limit setting. The selected model and gateway still govern output and reasoning support. Capacity settings help schedule compaction; they cannot prevent every overflow or make a gateway's smaller fallback model accept a larger request. Restart through the launcher after changing model or capacity.
+
+## Pi Agent and OpenCode adapters
+
+The client menu includes **3) Pi Agent** and **4) OpenCode**. Use `--client pi` or `--client opencode` to skip it. Both adapters require a gateway implementing **`/v1/chat/completions` with streaming, tool calls and tool-result follow-ups**. They use Chat Completions even for Claude or GPT model IDs; no protocol is inferred from the name. Metadata alone does not establish wire compatibility.
+
+- Pi loads a small temporary provider extension through `--extension`. The extension registers the selected model from environment-provided JSON, with `contextWindow`, `maxTokens`, text input and thinking disabled. The API key is an environment reference (legacy Pi 0.x syntax, or explicit interpolation for Pi 1.x). No `models.json` or `auth.json` is modified. The parent launcher removes the temporary extension on exit, including a failing client; forced `SIGKILL` can leave this non-secret file behind. Pi retains its native compaction settings. The configured minimum is 32K to leave room for Pi's default compaction reserve. The custom model's zero cost metadata means **pricing is unknown**, not free Gateway usage. See [Pi provider registration](https://pi.dev/docs/latest/custom-provider).
+- OpenCode receives inline `OPENCODE_CONFIG_CONTENT` with a custom `@ai-sdk/openai-compatible` provider and `{env:ERAGON_ROUTER_TOKEN}` credential reference. It pins the main and small model to the selected model, declares text modalities and context/output limits, and enables compaction with a 20% reserve. No project/global config or login file is written by the launcher. Existing OpenCode settings still merge with inline config, and managed configuration can take precedence. See [OpenCode configuration](https://opencode.ai/docs/config/).
+
+Both adapters accept the common capacity fields or `--context-window`. Missing capacity warns and assumes 125K. Output is capped at the smaller of the declared limit, 8192, or one quarter of the context window. They require an explicit `capabilities.chat_completions` or `supports_chat_completions` (top level, under `capabilities`, or in `model_info`) along with the common capabilities to appear as a candidate. Missing protocol metadata stays unverified; explicit false excludes the model, including conflicts across duplicate IDs. Claude verification records are not used for either client.
+
+The launcher does not install either client, call its login command, or add paid inference probes. Each client retains its normal session storage, logging and tool behavior; the launcher's credential handling does not disable those features. Real Gateway text/tool inference must still be verified separately.
 
 ## Fast capability screening
 
@@ -146,3 +159,9 @@ python3 -m unittest discover -s tests -v
 ```
 
 The tests cover hidden input, model selection, invalid input/catalogues, cancellation, terminal restoration, authentication failure, credential handling, and file writes.
+
+Optional checks against locally installed Pi and OpenCode (temporary isolated settings and fixture credentials, configuration loading only):
+
+```bash
+python3 tests/check_installed_clients.py
+```

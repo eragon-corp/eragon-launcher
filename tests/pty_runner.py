@@ -78,12 +78,56 @@ context = int(values['model_context_window'])
 assert int(values['model_auto_compact_token_limit']) == context // 5 * 4
 print('CODEX_LAUNCHED ' + json.dumps({'model': sys.argv[3], 'context': context, 'config': values}))
 """)
-    for path in [curl, claude, codex]: path.chmod(0o700)
+    pi = root / "pi"
+    pi.write_text("""#!/usr/bin/env python3
+import os, sys, json, pathlib
+if sys.argv[1:] == ['--version']:
+    print(os.environ.get('FIXTURE_PI_VERSION', '0.73.1'), file=sys.stderr); sys.exit(0)
+assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
+for name in ['ERAGON_API_KEY','eragon_key','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY']:
+    assert name not in os.environ, name
+assert all('fixture-secret' not in arg for arg in sys.argv)
+assert sys.argv[1] == '--extension' and sys.argv[3:5] == ['--provider','eragon_router']
+source = pathlib.Path(sys.argv[2]).read_text()
+assert 'fixture-secret' not in source and 'registerProvider' in source
+assert 'process.env.ERAGON_ROUTER_PI_CONFIG' in source
+config = json.loads(os.environ['ERAGON_ROUTER_PI_CONFIG'])
+assert 'fixture-secret' not in json.dumps(config)
+assert config['baseUrl'] == os.environ['EXPECTED_ENDPOINT'] + '/v1'
+assert config['api'] == 'openai-completions'
+assert config['apiKey'] == ('$ERAGON_ROUTER_TOKEN' if int(os.environ.get('FIXTURE_PI_VERSION','0.73.1').split('.')[0]) >= 1 else 'ERAGON_ROUTER_TOKEN')
+assert config['models'][0]['id'] == sys.argv[6]
+assert sys.argv[7:] == ['--thinking', 'off']
+print('PI_LAUNCHED ' + json.dumps(config))
+sys.exit(int(os.environ.get('FIXTURE_PI_EXIT', '0')))
+""")
+    opencode = root / "opencode"
+    opencode.write_text("""#!/usr/bin/env python3
+import os, sys, json
+if sys.argv[1:] == ['--version']:
+    print(os.environ.get('FIXTURE_OPENCODE_VERSION', '1.3.7')); sys.exit(0)
+assert os.environ['ERAGON_ROUTER_TOKEN'] == 'fixture-secret'
+for name in ['ERAGON_API_KEY','eragon_key','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_API_KEY','OPENAI_API_KEY']:
+    assert name not in os.environ, name
+assert all('fixture-secret' not in arg for arg in sys.argv)
+config = json.loads(os.environ['OPENCODE_CONFIG_CONTENT'])
+assert 'fixture-secret' not in json.dumps(config)
+assert sys.argv[1] == '--model' and sys.argv[2] == config['model'] == config['small_model']
+p = config['provider']['eragon_router']
+assert p['npm'] == '@ai-sdk/openai-compatible'
+assert p['options'] == {'baseURL':os.environ['EXPECTED_ENDPOINT'] + '/v1','apiKey':'{env:ERAGON_ROUTER_TOKEN}'}
+model = p['models'][sys.argv[2].split('/',1)[1]]
+assert model['limit']['output'] <= model['limit']['context'] // 4
+assert config['compaction']['auto'] is True
+assert config['compaction']['reserved'] == model['limit']['context'] - model['limit']['context'] // 5 * 4
+print('OPENCODE_LAUNCHED ' + json.dumps(config))
+""")
+    for path in [curl, claude, codex, pi, opencode]: path.chmod(0o700)
     environment = dict(os.environ, PATH=directory + os.pathsep + os.environ['PATH'],
         MODEL_RESPONSE=request['models'], CURL_FAIL=str(request.get('curlFail', 0)),
         ANTHROPIC_API_KEY='stale', CLAUDE_CODE_DISABLE_THINKING='1')
     # Do not accidentally use credentials/config from the developer's shell.
-    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN']:
+    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION', 'FIXTURE_CODEX_VERSION', 'ERAGON_CLIENT', 'ERAGON_ROUTER_TOKEN', 'ERAGON_ROUTER_PI_CONFIG', 'OPENCODE_CONFIG_CONTENT', 'FIXTURE_PI_VERSION', 'FIXTURE_OPENCODE_VERSION', 'FIXTURE_PI_EXIT']:
         environment.pop(name, None)
     if request.get('provideEndpoint', True):
         environment['ERAGON_ENDPOINT'] = 'https://gateway.example.com/gw'
@@ -91,7 +135,8 @@ print('CODEX_LAUNCHED ' + json.dumps({'model': sys.argv[3], 'context': context, 
     environment['EXPECTED_ENDPOINT'] = request.get('expectedEndpoint', 'https://gateway.example.com/gw')
     environment['EXPECT_NO_CATALOGUE'] = str(request.get('noCatalogue', 0))
     environment['EXPECTED_PROFILE'] = request.get('expectedProfile', '')
-    expected_files = ['claude', 'codex', 'curl', 'eragon.sh']
+    environment['TMPDIR'] = directory
+    expected_files = ['claude', 'codex', 'curl', 'eragon.sh', 'pi', 'opencode']
     if 'manifest' in request:
         manifest_path = root / 'compatibility.json'
         manifest_path.write_text(json.dumps(request['manifest']))

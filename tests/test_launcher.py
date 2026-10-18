@@ -306,7 +306,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_interactive_client_selection(self):
         for choices, expected in [([""], "Starting Claude Code"), (["2"], "CODEX_LAUNCHED"),
-                                  (["invalid", "3", "2"], "CODEX_LAUNCHED")]:
+                                  (["invalid", "5", "2"], "CODEX_LAUNCHED")]:
             with self.subTest(choices=choices):
                 reply = self.run_launcher({}, args=["--model", "custom"], noCatalogue=1, clientChoices=choices)
                 self.assertEqual(reply["exit"], 0)
@@ -383,6 +383,64 @@ class LauncherTests(unittest.TestCase):
         reply = self.run_launcher({"data": [{"id": "small", "max_input_tokens": 2048}]}, args=["--client", "codex"])
         self.assertNotEqual(reply["exit"], 0)
         self.assertNotIn('CODEX_LAUNCHED', reply["output"])
+
+    def test_pi_and_opencode_menu_and_explicit_launch(self):
+        for client, number, marker in [("pi", "3", "PI_LAUNCHED"), ("opencode", "4", "OPENCODE_LAUNCHED")]:
+            with self.subTest(client=client):
+                reply = self.run_launcher({}, args=["--model", "team/coder"], noCatalogue=1, clientChoices=[number])
+                self.assertEqual(reply["exit"], 0)
+                self.assertIn(marker, reply["output"])
+                reply = self.run_launcher({}, args=["--client", client, "--model", "team/coder", "--context-window", "64000"],
+                                          environment={"ERAGON_API_KEY":"fixture-secret"}, noCatalogue=1, noninteractive=True)
+                self.assertEqual(reply["exit"], 0)
+                self.assertIn(marker, reply["output"])
+
+    def test_chat_completions_screening_and_limits(self):
+        for client in ["pi", "opencode"]:
+            with self.subTest(client=client):
+                model = self.candidate("team/coder") | {"supports_chat_completions": True, "max_input_tokens": 64000, "max_output_tokens": 4096}
+                reply = self.run_launcher({"data": [model, self.candidate("unknown"),
+                    self.candidate("unsupported") | {"supports_chat_completions": False}]}, args=["--client", client])
+                self.assertEqual(reply["exit"], 0)
+                self.assertIn('team/coder [capabilities declared; not tested]', reply["output"])
+                self.assertNotIn('unknown [', reply["output"])
+                self.assertNotIn('unsupported [', reply["output"])
+                self.assertIn('64000', reply["output"])
+                self.assertIn('4096', reply["output"])
+
+    def test_chat_completions_conflicts_are_excluded(self):
+        for client in ["pi", "opencode"]:
+            reply = self.run_launcher({"data": [self.candidate("custom") | {"supports_chat_completions": True},
+                {"id":"custom", "model_info":{"supports_chat_completions":False}}]}, args=["--client", client])
+            self.assertNotEqual(reply["exit"], 0)
+            self.assertNotIn('_LAUNCHED', reply["output"])
+
+    def test_pi_cleanup_on_failure_and_v1_auth_reference(self):
+        reply = self.run_launcher({}, args=["--client", "pi", "--model", "coder"], noCatalogue=1,
+                                  environment={"ERAGON_API_KEY":"fixture-secret", "FIXTURE_PI_EXIT":"7"}, noninteractive=True)
+        self.assertEqual(reply["exit"], 7)
+        reply = self.run_launcher({}, args=["--client", "pi", "--model", "coder"], noCatalogue=1,
+                                  environment={"ERAGON_API_KEY":"fixture-secret", "FIXTURE_PI_VERSION":"1.0.0"}, noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('$ERAGON_ROUTER_TOKEN', reply["output"])
+
+    def test_pi_opencode_v1_endpoints_and_minimum_context(self):
+        for client in ["pi", "opencode"]:
+            reply = self.run_launcher({"data":[{"id":"coder"}]}, args=["--client",client,"--endpoint","https://gateway.example.com/gw/v1/"])
+            self.assertEqual(reply["exit"], 0)
+        reply = self.run_launcher({}, args=["--client","opencode","--model","coder","--context-window","4096"],
+                                  noCatalogue=1,environment={"ERAGON_API_KEY":"fixture-secret"},noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+        reply = self.run_launcher({"data":[{"id":"coder","max_input_tokens":16000}]},args=["--client","pi"])
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertIn('below 32768', reply["output"])
+
+    def test_pi_opencode_versions_and_hidden_input_cancellation(self):
+        for client, version_var, version in [("pi","FIXTURE_PI_VERSION","0.72.0"), ("opencode","FIXTURE_OPENCODE_VERSION","1.3.6")]:
+            reply = self.run_launcher({}, args=["--client",client,"--model","coder"], noCatalogue=1,environment={version_var:version})
+            self.assertNotEqual(reply["exit"], 0)
+            reply = self.run_launcher({}, args=["--client",client,"--model","coder"], noCatalogue=1,interrupt=True)
+            self.assertEqual(reply["exit"], 130)
 
     def test_cancel_restores_terminal(self):
         reply = self.run_launcher({"data": []}, interrupt=True)
