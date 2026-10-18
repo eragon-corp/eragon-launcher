@@ -24,7 +24,7 @@ print(os.environ['MODEL_RESPONSE'])
     claude.write_text("""#!/usr/bin/env python3
 import os, sys, json
 if sys.argv[1:] == ['--version']:
-    print(os.environ.get('FIXTURE_CLAUDE_VERSION', '2.1.0')); sys.exit(0)
+    print(os.environ.get('FIXTURE_CLAUDE_VERSION', '2.1.302')); sys.exit(0)
 assert os.environ['ANTHROPIC_AUTH_TOKEN'] == 'fixture-secret'
 assert 'ANTHROPIC_API_KEY' not in os.environ
 assert 'ERAGON_API_KEY' not in os.environ
@@ -41,7 +41,14 @@ if profile == 'basic':
     for name, value in compat.items(): assert os.environ.get(name) == value
 else:
     for name in compat: assert name not in os.environ
+capacity = {'CLAUDE_CODE_AUTO_COMPACT_WINDOW': os.environ['CLAUDE_CODE_AUTO_COMPACT_WINDOW'],
+            'CLAUDE_CODE_MAX_OUTPUT_TOKENS': os.environ['CLAUDE_CODE_MAX_OUTPUT_TOKENS'],
+            'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE': '90', 'DISABLE_COMPACT': '', 'DISABLE_AUTO_COMPACT': ''}
+expected.update(capacity)
 assert settings == {'env': expected}
+assert 'DISABLE_COMPACT' not in os.environ
+assert 'DISABLE_AUTO_COMPACT' not in os.environ
+print('CAPACITY ' + json.dumps(capacity))
 assert all('fixture-secret' not in arg for arg in sys.argv)
 print('LAUNCHED ' + json.dumps({'model': sys.argv[2], 'url': settings['env']['ANTHROPIC_BASE_URL']}))
 """)
@@ -50,7 +57,7 @@ print('LAUNCHED ' + json.dumps({'model': sys.argv[2], 'url': settings['env']['AN
         MODEL_RESPONSE=request['models'], CURL_FAIL=str(request.get('curlFail', 0)),
         ANTHROPIC_API_KEY='stale', CLAUDE_CODE_DISABLE_THINKING='1')
     # Do not accidentally use credentials/config from the developer's shell.
-    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE']:
+    for name in ['ERAGON_API_KEY', 'ERAGON_ENDPOINT', 'ERAGON_MODEL', 'eragon_key', 'endpoint', 'selected', 'ERAGON_COMPATIBILITY_FILE', 'ERAGON_CONTEXT_WINDOW', 'CLAUDE_CODE_AUTO_COMPACT_WINDOW', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE', 'FIXTURE_CLAUDE_VERSION']:
         environment.pop(name, None)
     if request.get('provideEndpoint', True):
         environment['ERAGON_ENDPOINT'] = 'https://gateway.example.com/gw'

@@ -9,13 +9,14 @@ set +a
 fail() { printf '%s\n' "$1" >&2; exit 1; }
 usage() {
   cat <<'HELP'
-Usage: bash eragon.sh [--endpoint HTTPS_URL] [--model MODEL_ID]
+Usage: bash eragon.sh [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
 
   --endpoint URL  Anthropic-compatible base URL (no /v1 suffix).
   --model ID      Use this model directly, without fetching a model list.
+  --context-window TOKENS  Actual gateway context/input limit (at least 125000).
   -h, --help      Show this help.
 
-Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY.
+Environment: ERAGON_ENDPOINT, ERAGON_MODEL, ERAGON_API_KEY, ERAGON_CONTEXT_WINDOW.
 Optional ERAGON_COMPATIBILITY_FILE: local verified-profile JSON (no keys/URLs).
 Flags override environment values. An endpoint must be provided explicitly.
 Without a key, prompt with hidden input. Without a model, filter the catalogue.
@@ -23,16 +24,21 @@ Keys are never saved. Pass a key through the environment or hidden prompt,
 not a command-line argument. Fully configured launches skip these prompts.
 HELP
 }
-unset endpoint selected eragon_key
+unset endpoint selected eragon_key context_limit
 eragon_key=${ERAGON_API_KEY-}
 unset ERAGON_API_KEY
 endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
+context_limit=${ERAGON_CONTEXT_WINDOW-}
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --endpoint|--model)
+    --endpoint|--model|--context-window)
       [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || fail "Missing value for $1."
-      if [[ "$1" == --endpoint ]]; then endpoint=$2; else selected=$2; fi
+      case "$1" in
+        --endpoint) endpoint=$2 ;;
+        --model) selected=$2 ;;
+        --context-window) context_limit=$2 ;;
+      esac
       shift 2 ;;
     -h|--help) usage; exit 0 ;;
     *) fail 'Unknown option. Run bash eragon.sh --help.' ;;
@@ -56,6 +62,18 @@ else
   command -v curl >/dev/null 2>&1 || fail 'Missing curl. Install it, then run this script again.'
   [[ -t 0 && -t 1 ]] || fail 'Model selection needs an interactive terminal. Set --model or ERAGON_MODEL.'
 fi
+if [[ -n "$context_limit" ]]; then
+  printf '%s' "$context_limit" | jq -eRs '
+    test("\\A[1-9][0-9]{0,8}\\z") and (tonumber >= 125000)
+  ' >/dev/null || fail 'Context window must be an integer from 125000 to 999999999 tokens.'
+fi
+# Older clients may silently ignore the compaction-window override.
+client_version=$(claude --version) || fail 'Could not read Claude Code version.'
+client_version=${client_version%% *}
+printf '%s' "$client_version" | jq -eRs '
+  capture("\\A(?<major>[0-9]+)\\.(?<minor>[0-9]+)\\.(?<patch>[0-9]+)\\z") |
+  [.major,.minor,.patch] | map(tonumber) | . >= [2,1,302]
+' >/dev/null || fail 'Claude Code 2.1.302 or later is required. Run claude update.'
 printf 'Eragon Router · Claude Code\nEndpoint: %s\n\n' "$endpoint"
 if [[ -z "$eragon_key" ]]; then
   [[ -t 0 && -t 1 ]] || fail 'Set ERAGON_API_KEY or run in an interactive terminal to enter a key.'
@@ -79,7 +97,6 @@ fi
 # Optional local test records. No network or live inference is used to certify.
 manifest='{"schema_version":1,"verified":[]}'
 endpoint_hash=''
-client_version=''
 if [[ -n "${ERAGON_COMPATIBILITY_FILE-}" ]]; then
   if ! manifest=$(jq -ecs '
     if length != 1 then error("one JSON document required") else .[0] end |
@@ -108,8 +125,6 @@ if [[ "$(printf '%s' "$manifest" | jq '.verified | length')" != 0 ]]; then
     fail 'A SHA-256 tool (shasum or sha256sum) is required for verified profiles.'
   fi
   endpoint_hash=${endpoint_hash%% *}
-  client_version=$(claude --version) || fail 'Could not read Claude Code version.'
-  client_version=${client_version%% *}
 fi
 
 if [[ -z "$selected" ]]; then
@@ -138,6 +153,9 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
   def textcap($field):
     [.[$field], .architecture[$field]] |
     map(select(type == "array" and all(.[]; type == "string")) | index("text") != null) | verdict;
+  def positive_limit:
+    map(select(type == "number" and . > 0 and . <= 999999999 and . == floor)) |
+    if length > 0 then min else null end;
   def classify:
     (cap("tools"; "supports_function_calling")) as $tools |
     (cap("streaming"; "supports_streaming")) as $stream |
@@ -147,7 +165,11 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
          (.supported_modalities | index("text") != null) else null end)] | verdict) as $input |
     ([textcap("output_modalities"), .capabilities.text_output] | verdict) as $output |
     [.mode, .model_info.mode] as $modes |
-    {id:.id, tools:$tools, streaming:$stream, input:$input, output:$output,
+    {id:.id,
+     context:([.context_length,.context_window,.max_input_tokens,
+       .model_info.context_length,.model_info.context_window,.model_info.max_input_tokens] | positive_limit),
+     max_output:([.max_output_tokens,.model_info.max_output_tokens] | positive_limit),
+     tools:$tools, streaming:$stream, input:$input, output:$output,
      nonchat: any($modes[]; . == "embedding" or . == "image_generation" or
        . == "audio_generation" or . == "audio_transcription" or . == "audio_speech" or . == "speech" or
        . == "video_generation" or . == "rerank" or . == "moderation")};
@@ -171,6 +193,8 @@ if ! classification=$(printf '%s' "$catalogue" | jq -ecs \
     (any($duplicates[]; .nonchat)) as $nonchat |
     ($verified[$id] // []) as $records |
     {id:$id,
+     context:([$duplicates[].context] | positive_limit),
+     max_output:([$duplicates[].max_output] | positive_limit),
      status:(if $nonchat or $tools == false or $stream == false or $input == false or $output == false
        then "unsupported"
        elif ($records | length) == 1 then "verified"
@@ -231,7 +255,25 @@ else
     printf 'Enter one of the model numbers above.\n'
   done
 fi
-unset classification rows
+# Apply capacity to the selected ID only. Duplicate routes use the smallest
+# declared bound; an explicit limit may lower, but never raise, that bound.
+limits=$(printf '%s' "$classification" | jq -c --arg id "$selected" \
+  '.models[] | select(.id == $id) | {context,max_output}')
+context_limit=$(printf '%s' "$limits" | jq -r --arg configured "$context_limit" '
+  [.context, (if $configured == "" then null else ($configured | tonumber) end)] |
+  map(select(. != null)) | if length > 0 then min else 0 end')
+output_limit=$(printf '%s' "$limits" | jq -r '[.max_output,8192] | map(select(. != null)) | min')
+if [[ "$context_limit" == 0 ]]; then
+  compact_window=100000
+  printf 'Context capacity unknown: using a conservative 100000-token compaction window.\n'
+  printf 'Set --context-window to the actual limit; limits below 125000 are unsupported.\n'
+else
+  [[ "$context_limit" -ge 125000 ]] || fail 'Declared context is below 125000 tokens; this launcher cannot safely configure its compaction window for this model.'
+  compact_window=$((context_limit / 5 * 4))
+  [[ "$compact_window" -le 1000000 ]] || compact_window=1000000
+  printf 'Gateway capacity: %s tokens; compaction window: %s; output cap: %s.\n' "$context_limit" "$compact_window" "$output_limit"
+fi
+unset classification rows limits
 
 export ANTHROPIC_BASE_URL="$endpoint"
 export ANTHROPIC_AUTH_TOKEN="$eragon_key"
@@ -242,7 +284,7 @@ unset CLAUDE_CODE_EFFORT_LEVEL DISABLE_PROMPT_CACHING
 export ANTHROPIC_CUSTOM_MODEL_OPTION="$selected"
 printf '\nStarting Claude Code with %s…\n' "$selected"
 # Saved user/project settings.env can override terminal exports. Pin only the
-# public endpoint through higher-priority CLI settings; the key stays in env.
+# public connection settings through higher-priority CLI settings; the key stays in env.
 # Basic is a client-side compatibility profile, not a protocol translator.
 # The configured gateway must expose Anthropic Messages for these models.
 if [[ "$profile" == basic ]]; then
@@ -254,4 +296,15 @@ if [[ "$profile" == basic ]]; then
 else
   launcher_settings=$(jq -cn --arg url "$endpoint" '{env:{ANTHROPIC_BASE_URL:$url}}')
 fi
+# Set compaction rather than MAX_CONTEXT_TOKENS: for recognized Claude IDs the
+# latter requires disabling compaction, defeating the protection we need.
+export CLAUDE_CODE_AUTO_COMPACT_WINDOW="$compact_window"
+export CLAUDE_CODE_MAX_OUTPUT_TOKENS="$output_limit"
+export CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90
+unset DISABLE_COMPACT DISABLE_AUTO_COMPACT
+launcher_settings=$(printf '%s' "$launcher_settings" | jq -c \
+  --arg window "$compact_window" --arg output "$output_limit" '
+  .env += {CLAUDE_CODE_AUTO_COMPACT_WINDOW:$window,
+    CLAUDE_CODE_MAX_OUTPUT_TOKENS:$output, CLAUDE_AUTOCOMPACT_PCT_OVERRIDE:"90",
+    DISABLE_COMPACT:"",DISABLE_AUTO_COMPACT:""}')
 exec claude --model "$selected" --settings "$launcher_settings"

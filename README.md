@@ -1,7 +1,7 @@
 # Eragon Router
 
 Start Claude Code through a configurable Anthropic-compatible HTTPS endpoint. No service endpoint is built in.
-Requires macOS or Linux, Bash 3.2+, an installed Claude Code CLI, curl, jq, and an API key for the selected endpoint.
+Requires macOS or Linux, Bash 3.2+, Claude Code 2.1.302 or later, curl, jq, and an API key for the selected endpoint.
 
 Download [eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh), then run it from your project folder:
 
@@ -20,6 +20,7 @@ All three connection values are configurable without editing the script or savin
 | Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Required; no built-in endpoint |
 | API key | Hidden prompt | `ERAGON_API_KEY` | Ask with hidden input |
 | Model | `--model ID` | `ERAGON_MODEL` | Fetch, screen and select a model |
+| Context/input capacity | `--context-window TOKENS` | `ERAGON_CONTEXT_WINDOW` | Catalogue metadata, otherwise conservative fallback |
 
 Options override environment values. The endpoint must be an HTTPS base URL without credentials, a query, or a fragment. Trailing slashes are removed. Use the Anthropic-compatible base URL, normally without a `/v1` suffix.
 
@@ -59,6 +60,21 @@ Recognized fields include `capabilities.tools`, `capabilities.streaming`, `capab
 Models named `claude-*` use the native profile by default. Other IDs use the basic profile: disable experimental betas, thinking and prompt caching, and select automatic effort. These settings are pinned through CLI settings to override saved project settings. A verified record can select a different profile for a custom alias. These profiles configure the client; they **do not translate protocols**. The gateway must expose Anthropic Messages for the selected model. Metadata alone cannot guarantee that tool execution works.
 
 An explicit `--model` or `ERAGON_MODEL` bypasses catalogue screening and prints an unverified warning unless a matching verification record exists. It still applies the appropriate client profile.
+
+### Context capacity and early compaction
+
+The launcher reads positive integer `context_length`, `context_window`, and `max_input_tokens` values at the top level or in `model_info`. It uses the smallest declared limit across fields and duplicate routes. `--context-window` / `ERAGON_CONTEXT_WINDOW` can lower that bound; it cannot increase a declared bound. For explicit model IDs, discovery is still skipped, so supply the actual gateway limit yourself:
+
+```bash
+bash ~/Downloads/eragon.sh --endpoint https://gateway.example.com/gw \
+  --model example/coder --context-window 200000
+```
+
+The launcher sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to 80% of that limit, capped at 1M, and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=90` to compact earlier where the client supports proactive compaction. It caps most response requests at 8192 output tokens, or a smaller declared `max_output_tokens`. These values are pinned through CLI settings; inherited compaction-disable switches are cleared. This changes compaction timing, not the model's actual capacity. It deliberately does not use `CLAUDE_CODE_MAX_CONTEXT_TOKENS`, whose effect for recognized Claude IDs requires disabling compaction. See the [Claude Code context configuration](https://code.claude.com/docs/en/model-config#context-window-and-auto-compaction).
+
+Without capacity metadata, startup warns and uses a 100K compaction window plus the output cap. This is a conservative fallback, **not proof that the gateway supports that capacity**. The supported auto-compact window starts at 100K; with headroom, declared limits below 125K are refused. Use a larger model for those routes. Missing, stale or inaccurate metadata, a sudden large tool result, or a gateway fallback to a smaller model can still cause an overflow. The launcher makes no extra inference probes.
+
+Use an up-to-date CLI (`claude update`); the launcher requires 2.1.302 or later as its supported baseline. Start a new session after changing model or capacity so the selected model's budget is reapplied. Existing oversized conversations may need a smaller summary in a new session; this cannot retroactively shrink an already rejected request. Capability verification records do not certify context capacity.
 
 ### Optional compatibility records
 

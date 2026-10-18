@@ -144,7 +144,7 @@ class LauncherTests(unittest.TestCase):
     def certificate(self, **overrides):
         record = {"endpoint_sha256": hashlib.sha256(b"https://gateway.example.com/gw").hexdigest(),
                   "model_id": "other/coder", "profile": "basic", "adapter_version": 1,
-                  "claude_code_version": "2.1.0", "tested_at": "fixture-only", "evidence": "fixture-only"}
+                  "claude_code_version": "2.1.302", "tested_at": "fixture-only", "evidence": "fixture-only"}
         record.update(overrides)
         return {"schema_version": 1, "verified": [record]}
 
@@ -238,6 +238,71 @@ class LauncherTests(unittest.TestCase):
                 reply = self.run_launcher({"data": [self.candidate()]}, manifest=manifest, noCatalogue=1)
                 self.assertNotEqual(reply["exit"], 0)
                 self.assertIn("Invalid compatibility file", reply["output"])
+
+    def test_capacity_metadata_and_duplicate_routes_use_minimum(self):
+        reply = self.run_launcher({"data": [
+            {"id": "claude-fixture", "context_window": 1000000},
+            {"id": "claude-fixture", "model_info": {"max_input_tokens": 128000, "max_output_tokens": 4096}}]})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "102400"', reply["output"])
+        self.assertIn('"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "4096"', reply["output"])
+
+    def test_explicit_capacity_no_catalogue_and_flags_override_environment(self):
+        reply = self.run_launcher({}, args=["--model", "claude-fixture", "--context-window", "200000"],
+                                  environment={"ERAGON_CONTEXT_WINDOW": "1000000", "ERAGON_API_KEY": "fixture-secret",
+                                               "DISABLE_COMPACT": "1", "DISABLE_AUTO_COMPACT": "1",
+                                               "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"},
+                                  noCatalogue=1, noninteractive=True)
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "160000"', reply["output"])
+        self.assertIn('"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "8192"', reply["output"])
+
+    def test_override_cannot_increase_declared_capacity(self):
+        reply = self.run_launcher({"data": [{"id": "custom", "context_length": 200000}]},
+                                  environment={"ERAGON_CONTEXT_WINDOW": "1000000"})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "160000"', reply["output"])
+
+    def test_selected_model_budget_and_smaller_override(self):
+        models = {"data": [{"id": "claude-a", "context_length": 1000000},
+                           {"id": "claude-b", "max_input_tokens": 200000}]}
+        reply = self.run_launcher(models, choices=["2"], environment={"ERAGON_CONTEXT_WINDOW": "150000"})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"model": "claude-b"', reply["output"])
+        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "120000"', reply["output"])
+
+    def test_unknown_or_malformed_capacity_uses_warned_fallback(self):
+        for metadata in [{}, {"context_window": "128000", "max_input_tokens": -1},
+                         {"context_length": 1.5, "max_output_tokens": 0}]:
+            with self.subTest(metadata=metadata):
+                reply = self.run_launcher({"data": [{"id": "custom", **metadata}]})
+                self.assertEqual(reply["exit"], 0)
+                self.assertIn("Context capacity unknown", reply["output"])
+                self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "100000"', reply["output"])
+
+    def test_large_context_is_capped_to_supported_compaction_window(self):
+        reply = self.run_launcher({"data": [{"id": "custom", "context_window": 2000000}]})
+        self.assertEqual(reply["exit"], 0)
+        self.assertIn('"CLAUDE_CODE_AUTO_COMPACT_WINDOW": "1000000"', reply["output"])
+
+    def test_small_declared_context_refuses_unsafe_launch(self):
+        reply = self.run_launcher({"data": [{"id": "small", "max_input_tokens": 64000}]})
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertNotIn("LAUNCHED", reply["output"])
+        self.assertIn("below 125000", reply["output"])
+
+    def test_invalid_context_configuration_rejected_before_request(self):
+        for value in ["0", "64000", "200k", "200000\n", "9999999999", "$(touch injected)"]:
+            with self.subTest(value=value):
+                reply = self.run_launcher({}, args=["--context-window", value], noCatalogue=1)
+                self.assertNotEqual(reply["exit"], 0)
+                self.assertNotIn("LAUNCHED", reply["output"])
+
+    def test_old_client_cannot_silently_ignore_capacity_settings(self):
+        reply = self.run_launcher({}, environment={"FIXTURE_CLAUDE_VERSION": "2.1.0"}, noCatalogue=1)
+        self.assertNotEqual(reply["exit"], 0)
+        self.assertIn("claude update", reply["output"])
+        self.assertNotIn("LAUNCHED", reply["output"])
 
     def test_cancel_restores_terminal(self):
         reply = self.run_launcher({"data": []}, interrupt=True)
