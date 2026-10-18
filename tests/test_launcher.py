@@ -304,6 +304,23 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("claude update", reply["output"])
         self.assertNotIn("LAUNCHED", reply["output"])
 
+    def test_interactive_client_selection(self):
+        for choices, expected in [([""], "Starting Claude Code"), (["2"], "CODEX_LAUNCHED"),
+                                  (["invalid", "3", "2"], "CODEX_LAUNCHED")]:
+            with self.subTest(choices=choices):
+                reply = self.run_launcher({}, args=["--model", "custom"], noCatalogue=1, clientChoices=choices)
+                self.assertEqual(reply["exit"], 0)
+                self.assertIn("Choose a client", reply["output"])
+                self.assertIn(expected, reply["output"])
+
+    def test_configured_client_skips_client_menu(self):
+        for options in [{"args": ["--client", "codex", "--model", "custom"]},
+                        {"environment": {"ERAGON_CLIENT": "claude", "ERAGON_MODEL": "custom"}}]:
+            with self.subTest(options=options):
+                reply = self.run_launcher({}, noCatalogue=1, **options)
+                self.assertEqual(reply["exit"], 0)
+                self.assertNotIn("Choose a client", reply["output"])
+
     def test_codex_explicit_model_and_capacity_without_discovery(self):
         reply = self.run_launcher({}, args=["--client", "codex", "--model", "custom/coder", "--context-window", "64000"],
                                   noCatalogue=1, noninteractive=True,

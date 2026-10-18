@@ -112,6 +112,8 @@ print('CODEX_LAUNCHED ' + json.dumps({'model': sys.argv[3], 'context': context, 
     sent_key = False
     choices = iter(request.get('choices', ['']))
     prompts_seen = 0
+    client_choices = iter(request.get('clientChoices', ['']))
+    client_prompts_seen = 0
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], .1)
@@ -120,6 +122,9 @@ print('CODEX_LAUNCHED ' + json.dumps({'model': sys.argv[3], 'context': context, 
         except OSError: break
         if not chunk: break
         transcript += chunk
+        client_count = transcript.count(b'Client number [1]: ')
+        if client_count > client_prompts_seen:
+            os.write(fd, (next(client_choices, '') + '\n').encode()); client_prompts_seen = client_count
         if b'Personal API Key: ' in transcript and not sent_key:
             os.write(fd, b'\x03' if request.get('interrupt') else b'fixture-secret\n'); sent_key = True
         count = transcript.count(b'Model number [1]: ')

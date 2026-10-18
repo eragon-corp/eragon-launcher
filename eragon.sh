@@ -11,7 +11,7 @@ usage() {
   cat <<'HELP'
 Usage: bash eragon.sh [--client claude|codex] [--endpoint HTTPS_URL] [--model MODEL_ID] [--context-window TOKENS]
 
-  --client NAME   claude (default) or codex.
+  --client NAME   claude or codex; skip the interactive client menu.
   --endpoint URL  Gateway base URL (Codex also accepts a trailing /v1).
   --model ID      Use this model directly, without fetching a model list.
   --context-window TOKENS  Actual gateway context/input limit (Claude: >=125000; Codex: >=4096).
@@ -31,7 +31,7 @@ unset ERAGON_API_KEY ERAGON_ROUTER_TOKEN
 endpoint=${ERAGON_ENDPOINT-}
 selected=${ERAGON_MODEL-}
 context_limit=${ERAGON_CONTEXT_WINDOW-}
-client=${ERAGON_CLIENT-claude}
+client=${ERAGON_CLIENT-}
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --endpoint|--model|--context-window|--client)
@@ -48,6 +48,22 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 [[ -n "$endpoint" ]] || fail 'Endpoint required. Use --endpoint or ERAGON_ENDPOINT.'
+if [[ -z "$client" ]]; then
+  if [[ -t 0 && -t 1 ]]; then
+    printf 'Choose a client:\n  1) Claude Code\n  2) Codex\n'
+    while true; do
+      read -r -p 'Client number [1]: ' client_choice || fail 'Client selection cancelled.'
+      case "${client_choice:-1}" in
+        1) client=claude; break ;;
+        2) client=codex; break ;;
+        *) printf 'Enter 1 or 2.\n' ;;
+      esac
+    done
+  else
+    # Preserve existing noninteractive invocations.
+    client=claude
+  fi
+fi
 case "$client" in
   claude) client_command=claude; client_label='Claude Code'; minimum_context=125000 ;;
   codex) client_command=codex; client_label=Codex; minimum_context=4096 ;;

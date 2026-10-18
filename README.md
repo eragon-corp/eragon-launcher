@@ -5,13 +5,13 @@ Requires macOS or Linux, Bash 3.2+, curl, jq, an API key for the selected endpoi
 
 Download [eragon.sh](https://github.com/eragon-corp/eragon-router/raw/refs/heads/main/eragon.sh), then run it from your project folder:
 
-Claude Code (default):
+Run this command, then choose Claude Code or Codex in the terminal (Enter selects Claude Code):
 
 ```bash
 bash ~/Downloads/eragon.sh --endpoint https://gateway.example.com/gw
 ```
 
-Codex:
+To skip the client menu and start Codex directly:
 
 ```bash
 bash ~/Downloads/eragon.sh --client codex --endpoint https://gateway.example.com/gw
@@ -25,7 +25,7 @@ All three connection values are configurable without editing the script or savin
 
 | Value | Command-line option | Environment | Default |
 | --- | --- | --- | --- |
-| Client | `--client claude\|codex` | `ERAGON_CLIENT` | `claude` |
+| Client | `--client claude\|codex` | `ERAGON_CLIENT` | Interactive menu; `claude` without a terminal |
 | Endpoint | `--endpoint URL` | `ERAGON_ENDPOINT` | Required; no built-in endpoint |
 | API key | Hidden prompt | `ERAGON_API_KEY` | Ask with hidden input |
 | Model | `--model ID` | `ERAGON_MODEL` | Fetch, screen and select a model |
@@ -49,7 +49,7 @@ export ERAGON_MODEL=claude-sonnet-5
 bash ~/Downloads/eragon.sh
 ```
 
-With all three values configured, the launcher skips its own prompts and terminal checks. Each client retains its normal terminal requirements. An explicit model ID bypasses `/v1/models`, so custom model aliases and endpoints without model discovery work too. The selected endpoint decides whether that model is available. If no model is configured, the launcher fetches `/v1/models` using the key and screens the returned capability metadata locally and offers usable models interactively.
+Set `--client` or `ERAGON_CLIENT` to skip the client menu. With the client, endpoint, model and key configured, the launcher skips its own prompts and terminal checks. Without a terminal, an unspecified client remains `claude` for compatibility. Each client retains its normal terminal requirements. An explicit model ID bypasses `/v1/models`, so custom model aliases and endpoints without model discovery work too. The selected endpoint decides whether that model is available. If no model is configured, the launcher fetches `/v1/models` using the key and screens the returned capability metadata locally and offers usable models interactively.
 
 There is deliberately no `--api-key` argument: command-line secrets can appear in process listings and shell history. Do not paste literal keys into shell commands or config files. Existing `ANTHROPIC_*` and `OPENAI_*` variables are not used as configuration inputs; use the `ERAGON_*` values above.
 
