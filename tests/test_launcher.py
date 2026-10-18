@@ -16,6 +16,7 @@ class LauncherTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         reply = json.loads(result.stdout)
         self.assertNotIn("fixture-secret", reply["output"])
+        self.assertNotIn("[unverified]", reply["output"])
         self.assertLessEqual(reply["output"].count("FIXTURE_CATALOGUE_REQUEST"), 1)
         return reply
 
@@ -165,15 +166,15 @@ class LauncherTests(unittest.TestCase):
     def test_show_more_can_select_unknown(self):
         reply = self.run_launcher({"data": [self.candidate(), {"id": "unknown-model"}]}, choices=["m", "2"])
         self.assertEqual(reply["exit"], 0)
-        self.assertIn("unknown-model [unverified]", reply["output"])
+        self.assertIn("unknown-model", reply["output"])
         self.assertIn('"model": "unknown-model"', reply["output"])
 
     def test_missing_metadata_is_unverified_even_for_claude(self):
         reply = self.run_launcher({"data": [{"id": "claude-fixture"}, {"id": "gpt-fixture"}]})
         self.assertEqual(reply["exit"], 0)
         self.assertIn("showing unverified", reply["output"])
-        self.assertIn("claude-fixture [unverified]", reply["output"])
-        self.assertIn("gpt-fixture [unverified]", reply["output"])
+        self.assertIn("claude-fixture", reply["output"])
+        self.assertIn("gpt-fixture", reply["output"])
 
     def test_false_capabilities_and_nonchat_modes_always_exclude(self):
         cases = [self.candidate() | {"supports_streaming": False},
@@ -208,7 +209,7 @@ class LauncherTests(unittest.TestCase):
                 reply = self.run_launcher({"data": [{"id": "other/coder"}]}, manifest=self.certificate(**overrides))
                 self.assertEqual(reply["exit"], 0)
                 self.assertNotIn("verified for this endpoint/client/adapter", reply["output"])
-                self.assertIn("other/coder [unverified]", reply["output"])
+                self.assertIn("other/coder", reply["output"])
 
     def test_certificate_can_select_native_profile_for_alias(self):
         reply = self.run_launcher({}, args=["--model", "other/coder"], noCatalogue=1,
@@ -221,7 +222,7 @@ class LauncherTests(unittest.TestCase):
         manifest["verified"].append(self.certificate(profile="native")["verified"][0])
         reply = self.run_launcher({"data": [{"id": "other/coder"}]}, manifest=manifest)
         self.assertEqual(reply["exit"], 0)
-        self.assertIn("other/coder [unverified]", reply["output"])
+        self.assertIn("other/coder", reply["output"])
         self.assertNotIn("verified for this endpoint/client/adapter", reply["output"])
 
     def test_malformed_capability_fields_remain_unknown(self):
@@ -229,7 +230,7 @@ class LauncherTests(unittest.TestCase):
                                             "supports_streaming": 1, "supported_modalities": [123],
                                             "input_modalities": [None], "output_modalities": "text"}]})
         self.assertEqual(reply["exit"], 0)
-        self.assertIn("other/coder [unverified]", reply["output"])
+        self.assertIn("other/coder", reply["output"])
         self.assertNotIn("capabilities declared; not tested", reply["output"])
 
     def test_invalid_manifest_fails_before_catalogue_request(self):
@@ -368,7 +369,7 @@ class LauncherTests(unittest.TestCase):
                                   environment={"ERAGON_CLIENT": "codex"})
         self.assertEqual(reply["exit"], 0)
         self.assertNotIn('verified for this endpoint/client/adapter', reply["output"])
-        self.assertIn('other/coder [unverified]', reply["output"])
+        self.assertIn('other/coder', reply["output"])
 
     def test_codex_invalid_client_and_old_version(self):
         for environment in [{"ERAGON_CLIENT": "invalid"},

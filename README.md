@@ -80,7 +80,7 @@ The model menu shows models available through your Gateway and key. Models that 
 
 For example, enter `/sonnet` to find IDs containing `sonnet`. Search runs locally and does not send additional requests to the Gateway.
 
-A model marked **unverified** has incomplete compatibility information. A model marked **capabilities declared; not tested** has the required metadata but has not been tested by the launcher. Neither label guarantees that every client feature will work. Ask your administrator which models are supported for your client.
+Models with incomplete compatibility information appear without a status label. A model marked **capabilities declared; not tested** has the required metadata but has not been tested by the launcher. A displayed model is not a guarantee that every client feature will work. Ask your administrator which models are supported for your client.
 
 ## Manage your API key
 

@@ -361,9 +361,13 @@ else
       case "${statuses[index]}" in
         verified) label='verified for this endpoint/client/adapter' ;;
         candidate) label='capabilities declared; not tested' ;;
-        *) label='unverified' ;;
+        *) label='' ;;
       esac
-      printf '  %d) %s [%s]\n' "$((position + 1))" "${models[index]}" "$label"
+      if [[ -n "$label" ]]; then
+        printf '  %d) %s [%s]\n' "$((position + 1))" "${models[index]}" "$label"
+      else
+        printf '  %d) %s\n' "$((position + 1))" "${models[index]}"
+      fi
     done
     if [[ "${#view_indices[@]}" == 0 ]]; then printf '  No matching models. Try /another-word or / to clear.\n'; fi
     if [[ "$visible_count" != "${#models[@]}" ]]; then
